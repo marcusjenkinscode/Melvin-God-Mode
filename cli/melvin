@@ -1,0 +1,1523 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  Melvin God Mode — Master CLI
+#  /opt/melvin/cli/melvin
+# =============================================================================
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Colour palette
+# ---------------------------------------------------------------------------
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+BASE_DIR=/opt/melvin
+VENV_PYTHON="${BASE_DIR}/venv/bin/python"
+LOG_DIR="/var/log/melvin"
+OLLAMA_HOST="${OLLAMA_HOST:-127.0.0.1}"
+OLLAMA_PORT="${OLLAMA_PORT:-11434}"
+WEBUI_PORT="${WEBUI_PORT:-5000}"
+
+# ---------------------------------------------------------------------------
+# Utility helpers
+# ---------------------------------------------------------------------------
+info()    { printf "${GREEN}[INFO]${NC}  %s\n" "$*"; }
+warn()    { printf "${YELLOW}[WARN]${NC}  %s\n" "$*"; }
+error()   { printf "${RED}[ERROR]${NC} %s\n" "$*" >&2; }
+success() { printf "${GREEN}[OK]${NC}    %s\n" "$*"; }
+pause()   { printf "\n${CYAN}Press ENTER to continue...${NC}"; read -r; }
+
+run_python() {
+    local script="$1"; shift
+    local args=("$@")
+    if [[ -x "${VENV_PYTHON}" ]]; then
+        # shellcheck disable=SC1091
+        source "${BASE_DIR}/venv/bin/activate" 2>/dev/null || true
+        "${VENV_PYTHON}" "${BASE_DIR}/${script}" "${args[@]}" || {
+            error "Python script '${script}' exited with error $?"
+        }
+    else
+        warn "Virtual environment not found at ${VENV_PYTHON}. Trying system python3."
+        python3 "${BASE_DIR}/${script}" "${args[@]}" 2>/dev/null || {
+            error "python3 '${script}' exited with error $?"
+        }
+    fi
+}
+
+check_service() {
+    local service="$1"
+    if systemctl is-active --quiet "${service}" 2>/dev/null; then
+        printf "${GREEN}● ${service} is running${NC}\n"
+        return 0
+    else
+        printf "${RED}○ ${service} is NOT running${NC}\n"
+        return 1
+    fi
+}
+
+print_menu_item() {
+    local number="$1"
+    local description="$2"
+    printf "  ${CYAN}%3s)${NC} %s\n" "${number}" "${description}"
+}
+
+divider() {
+    printf "${BLUE}%s${NC}\n" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
+show_banner() {
+    clear
+    if command -v figlet &>/dev/null; then
+        figlet -f slant "Melvin" 2>/dev/null | sed "s/.*/${MAGENTA}&${NC}/" || true
+        figlet -f small "God Mode" 2>/dev/null | sed "s/.*/${CYAN}&${NC}/" || true
+    elif command -v toilet &>/dev/null; then
+        toilet -f mono12 --gay "Melvin God Mode" 2>/dev/null || true
+    elif [[ -f "${BASE_DIR}/ascii/banners/main.txt" ]]; then
+        cat "${BASE_DIR}/ascii/banners/main.txt"
+    else
+        printf "${MAGENTA}${BOLD}"
+        printf '  ███╗   ███╗███████╗██╗    ██╗   ██╗██╗███╗   ██╗\n'
+        printf '  ████╗ ████║██╔════╝██║    ██║   ██║██║████╗  ██║\n'
+        printf '  ██╔████╔██║█████╗  ██║    ██║   ██║██║██╔██╗ ██║\n'
+        printf '  ██║╚██╔╝██║██╔══╝  ██║    ╚██╗ ██╔╝██║██║╚██╗██║\n'
+        printf '  ██║ ╚═╝ ██║███████╗███████╗╚████╔╝ ██║██║ ╚████║\n'
+        printf '  ╚═╝     ╚═╝╚══════╝╚══════╝ ╚═══╝  ╚═╝╚═╝  ╚═══╝\n'
+        printf "${NC}"
+        printf "${CYAN}${BOLD}               G O D   M O D E   A I   P L A T F O R M${NC}\n"
+    fi
+    divider
+    printf "  ${WHITE}Version:${NC} 1.0.0   ${WHITE}Base:${NC} ${BASE_DIR}   ${WHITE}Ollama:${NC} ${OLLAMA_HOST}:${OLLAMA_PORT}\n"
+    divider
+}
+
+show_section_banner() {
+    local section="$1"
+    clear
+    local banner_file="${BASE_DIR}/ascii/banners/${section}.txt"
+    if [[ -f "${banner_file}" ]]; then
+        cat "${banner_file}"
+    elif command -v figlet &>/dev/null; then
+        figlet -f small "${section}" 2>/dev/null || printf "${BOLD}${CYAN}=== ${section} ===${NC}\n"
+    else
+        printf "\n${BOLD}${CYAN}╔══════════════════════════════════════════╗${NC}\n"
+        printf "${BOLD}${CYAN}║  %-40s  ║${NC}\n" "${section^^}"
+        printf "${BOLD}${CYAN}╚══════════════════════════════════════════╝${NC}\n"
+    fi
+    divider
+}
+
+prompt_input() {
+    local prompt_msg="$1"
+    local var_name="$2"
+    printf "${YELLOW}${prompt_msg}${NC}: "
+    read -r "${var_name?}"
+}
+
+ollama_chat() {
+    local model="$1"
+    local prompt="$2"
+    curl -s -X POST "http://${OLLAMA_HOST}:${OLLAMA_PORT}/api/generate" \
+        -H "Content-Type: application/json" \
+        -d "{\"model\":\"${model}\",\"prompt\":\"${prompt}\",\"stream\":false}" \
+        2>/dev/null | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    print(d.get('response','(no response)'))
+except Exception as e:
+    print('Error:', e)
+" || error "Failed to reach Ollama at ${OLLAMA_HOST}:${OLLAMA_PORT}"
+}
+
+ollama_stream() {
+    local model="$1"
+    local prompt="$2"
+    curl -s -N -X POST "http://${OLLAMA_HOST}:${OLLAMA_PORT}/api/generate" \
+        -H "Content-Type: application/json" \
+        -d "{\"model\":\"${model}\",\"prompt\":\"${prompt}\",\"stream\":true}" \
+        2>/dev/null | while IFS= read -r line; do
+            [[ -z "${line}" ]] && continue
+            python3 -c "
+import sys, json
+try:
+    d = json.loads('${line//\'/\\\'}')
+    r = d.get('response','')
+    sys.stdout.write(r)
+    sys.stdout.flush()
+except: pass
+" 2>/dev/null || true
+        done
+    printf "\n"
+}
+
+# =============================================================================
+# SECTION 1: AI TOOLS (options 1-50)
+# =============================================================================
+menu_ai_tools() {
+    while true; do
+        show_section_banner "AI Tools"
+        printf "${BOLD}${WHITE}  CHAT WITH AI MODELS${NC}\n\n"
+        print_menu_item  1  "Chat with llama3"
+        print_menu_item  2  "Chat with llama3:70b"
+        print_menu_item  3  "Chat with mistral"
+        print_menu_item  4  "Chat with mistral:7b-instruct"
+        print_menu_item  5  "Chat with mixtral"
+        print_menu_item  6  "Chat with mixtral:8x22b"
+        print_menu_item  7  "Chat with codellama"
+        print_menu_item  8  "Chat with codellama:34b"
+        print_menu_item  9  "Chat with phi3"
+        print_menu_item 10  "Chat with phi3:medium"
+        print_menu_item 11  "Chat with gemma"
+        print_menu_item 12  "Chat with gemma:7b"
+        print_menu_item 13  "Chat with gemma2"
+        print_menu_item 14  "Chat with neural-chat"
+        print_menu_item 15  "Chat with starling-lm"
+        print_menu_item 16  "Chat with orca-mini"
+        print_menu_item 17  "Chat with vicuna"
+        print_menu_item 18  "Chat with dolphin-mistral"
+        print_menu_item 19  "Chat with dolphin-mixtral"
+        print_menu_item 20  "Chat with openchat"
+        print_menu_item 21  "Chat with wizard-vicuna-uncensored"
+        print_menu_item 22  "Chat with wizardcoder"
+        print_menu_item 23  "Chat with starcoder2"
+        print_menu_item 24  "Chat with deepseek-coder"
+        print_menu_item 25  "Chat with deepseek-r1"
+        print_menu_item 26  "Chat with llava (vision)"
+        print_menu_item 27  "Chat with bakllava (vision)"
+        print_menu_item 28  "Chat with moondream (vision)"
+        print_menu_item 29  "Chat with nomic-embed-text"
+        print_menu_item 30  "Chat with mxbai-embed-large"
+        printf "\n${BOLD}${WHITE}  ADVANCED MODES${NC}\n\n"
+        print_menu_item 31  "Stream mode chat (any model)"
+        print_menu_item 32  "Multi-turn conversation"
+        print_menu_item 33  "System prompt editor"
+        print_menu_item 34  "Chat with custom model name"
+        print_menu_item 35  "Batch prompt from file"
+        print_menu_item 36  "Save conversation to file"
+        print_menu_item 37  "Load conversation from file"
+        print_menu_item 38  "Compare two models side-by-side"
+        print_menu_item 39  "Temperature tuning chat"
+        print_menu_item 40  "Context window size test"
+        print_menu_item 41  "JSON output mode"
+        print_menu_item 42  "Code generation mode"
+        print_menu_item 43  "Translation mode"
+        print_menu_item 44  "Summarisation mode"
+        print_menu_item 45  "Q&A mode"
+        print_menu_item 46  "Creative writing mode"
+        print_menu_item 47  "Debug / explain code mode"
+        print_menu_item 48  "Math / reasoning mode"
+        print_menu_item 49  "List available Ollama models"
+        print_menu_item 50  "Ollama API health check"
+        printf "\n"
+        print_menu_item  0  "Back to main menu"
+        printf "\n"
+        divider
+        printf "${YELLOW}Select option:${NC} "
+        read -r choice
+        case "${choice}" in
+            1)  prompt_input "Enter your message" msg; ollama_chat "llama3" "${msg}" ;;
+            2)  prompt_input "Enter your message" msg; ollama_chat "llama3:70b" "${msg}" ;;
+            3)  prompt_input "Enter your message" msg; ollama_chat "mistral" "${msg}" ;;
+            4)  prompt_input "Enter your message" msg; ollama_chat "mistral:7b-instruct" "${msg}" ;;
+            5)  prompt_input "Enter your message" msg; ollama_chat "mixtral" "${msg}" ;;
+            6)  prompt_input "Enter your message" msg; ollama_chat "mixtral:8x22b" "${msg}" ;;
+            7)  prompt_input "Enter your message" msg; ollama_chat "codellama" "${msg}" ;;
+            8)  prompt_input "Enter your message" msg; ollama_chat "codellama:34b" "${msg}" ;;
+            9)  prompt_input "Enter your message" msg; ollama_chat "phi3" "${msg}" ;;
+            10) prompt_input "Enter your message" msg; ollama_chat "phi3:medium" "${msg}" ;;
+            11) prompt_input "Enter your message" msg; ollama_chat "gemma" "${msg}" ;;
+            12) prompt_input "Enter your message" msg; ollama_chat "gemma:7b" "${msg}" ;;
+            13) prompt_input "Enter your message" msg; ollama_chat "gemma2" "${msg}" ;;
+            14) prompt_input "Enter your message" msg; ollama_chat "neural-chat" "${msg}" ;;
+            15) prompt_input "Enter your message" msg; ollama_chat "starling-lm" "${msg}" ;;
+            16) prompt_input "Enter your message" msg; ollama_chat "orca-mini" "${msg}" ;;
+            17) prompt_input "Enter your message" msg; ollama_chat "vicuna" "${msg}" ;;
+            18) prompt_input "Enter your message" msg; ollama_chat "dolphin-mistral" "${msg}" ;;
+            19) prompt_input "Enter your message" msg; ollama_chat "dolphin-mixtral" "${msg}" ;;
+            20) prompt_input "Enter your message" msg; ollama_chat "openchat" "${msg}" ;;
+            21) prompt_input "Enter your message" msg; ollama_chat "wizard-vicuna-uncensored" "${msg}" ;;
+            22) prompt_input "Enter your message" msg; ollama_chat "wizardcoder" "${msg}" ;;
+            23) prompt_input "Enter your message" msg; ollama_chat "starcoder2" "${msg}" ;;
+            24) prompt_input "Enter your message" msg; ollama_chat "deepseek-coder" "${msg}" ;;
+            25) prompt_input "Enter your message" msg; ollama_chat "deepseek-r1" "${msg}" ;;
+            26) prompt_input "Enter your message" msg; ollama_chat "llava" "${msg}" ;;
+            27) prompt_input "Enter your message" msg; ollama_chat "bakllava" "${msg}" ;;
+            28) prompt_input "Enter your message" msg; ollama_chat "moondream" "${msg}" ;;
+            29) prompt_input "Enter your message" msg; ollama_chat "nomic-embed-text" "${msg}" ;;
+            30) prompt_input "Enter your message" msg; ollama_chat "mxbai-embed-large" "${msg}" ;;
+            31) prompt_input "Enter model name" mdl; prompt_input "Enter your message" msg; ollama_stream "${mdl}" "${msg}" ;;
+            32)
+                prompt_input "Enter model name (default: llama3)" mdl
+                [[ -z "${mdl}" ]] && mdl="llama3"
+                printf "${GREEN}Multi-turn mode. Type 'exit' to quit.${NC}\n"
+                history_prompt=""
+                while true; do
+                    printf "${CYAN}You:${NC} "; read -r user_msg
+                    [[ "${user_msg}" == "exit" ]] && break
+                    history_prompt+="User: ${user_msg}\nAssistant: "
+                    response=$(ollama_chat "${mdl}" "${history_prompt}")
+                    printf "${MAGENTA}AI:${NC} %s\n" "${response}"
+                    history_prompt+="${response}\n"
+                done
+                ;;
+            33)
+                prompt_input "Enter system prompt" sys_prompt
+                prompt_input "Enter model (default: llama3)" mdl
+                [[ -z "${mdl}" ]] && mdl="llama3"
+                prompt_input "Enter user message" user_msg
+                full_prompt="System: ${sys_prompt}\nUser: ${user_msg}\nAssistant:"
+                ollama_chat "${mdl}" "${full_prompt}"
+                ;;
+            34) prompt_input "Enter model name" mdl; prompt_input "Enter your message" msg; ollama_chat "${mdl}" "${msg}" ;;
+            35)
+                prompt_input "Enter file path containing prompts" fpath
+                prompt_input "Enter model (default: llama3)" mdl
+                [[ -z "${mdl}" ]] && mdl="llama3"
+                if [[ -f "${fpath}" ]]; then
+                    while IFS= read -r line; do
+                        [[ -z "${line}" ]] && continue
+                        printf "${CYAN}Prompt:${NC} %s\n" "${line}"
+                        ollama_chat "${mdl}" "${line}"
+                        printf "\n"
+                    done < "${fpath}"
+                else
+                    error "File not found: ${fpath}"
+                fi
+                ;;
+            36)
+                prompt_input "Enter model (default: llama3)" mdl
+                [[ -z "${mdl}" ]] && mdl="llama3"
+                prompt_input "Enter your message" msg
+                prompt_input "Save to file path" savepath
+                response=$(ollama_chat "${mdl}" "${msg}")
+                printf "Model: %s\nPrompt: %s\nResponse: %s\n" "${mdl}" "${msg}" "${response}" > "${savepath}"
+                success "Saved to ${savepath}"
+                ;;
+            37)
+                prompt_input "Enter file path" fpath
+                [[ -f "${fpath}" ]] && cat "${fpath}" || error "File not found"
+                ;;
+            38)
+                prompt_input "Enter model 1" mdl1; prompt_input "Enter model 2" mdl2
+                prompt_input "Enter your message" msg
+                printf "\n${CYAN}--- ${mdl1} ---${NC}\n"; ollama_chat "${mdl1}" "${msg}"
+                printf "\n${MAGENTA}--- ${mdl2} ---${NC}\n"; ollama_chat "${mdl2}" "${msg}"
+                ;;
+            39) prompt_input "Enter model" mdl; prompt_input "Temperature (0.0-2.0)" temp; prompt_input "Enter message" msg
+                curl -s -X POST "http://${OLLAMA_HOST}:${OLLAMA_PORT}/api/generate" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"model\":\"${mdl}\",\"prompt\":\"${msg}\",\"options\":{\"temperature\":${temp}},\"stream\":false}" \
+                    | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('response',''))" 2>/dev/null || error "Failed"
+                ;;
+            40) printf "${WHITE}Sending a 2000-word test prompt to measure context handling...${NC}\n"
+                test_prompt="Please summarise the following repeated text in one sentence: $(printf 'The quick brown fox jumps over the lazy dog. %.0s' {1..100})"
+                prompt_input "Enter model (default: llama3)" mdl; [[ -z "${mdl}" ]] && mdl="llama3"
+                ollama_chat "${mdl}" "${test_prompt}" ;;
+            41) prompt_input "Enter model" mdl; prompt_input "Enter message (ask for JSON output)" msg
+                ollama_chat "${mdl}" "Respond only with valid JSON. ${msg}" ;;
+            42) prompt_input "Enter model (default: codellama)" mdl; [[ -z "${mdl}" ]] && mdl="codellama"
+                prompt_input "Describe the code to generate" msg; ollama_chat "${mdl}" "Write code: ${msg}" ;;
+            43) prompt_input "Target language" lang; prompt_input "Text to translate" msg
+                prompt_input "Model (default: mistral)" mdl; [[ -z "${mdl}" ]] && mdl="mistral"
+                ollama_chat "${mdl}" "Translate to ${lang}: ${msg}" ;;
+            44) prompt_input "Model (default: llama3)" mdl; [[ -z "${mdl}" ]] && mdl="llama3"
+                prompt_input "Text to summarise" msg; ollama_chat "${mdl}" "Summarise: ${msg}" ;;
+            45) prompt_input "Model (default: llama3)" mdl; [[ -z "${mdl}" ]] && mdl="llama3"
+                prompt_input "Context/document" ctx; prompt_input "Question" q
+                ollama_chat "${mdl}" "Context: ${ctx}\nQuestion: ${q}" ;;
+            46) prompt_input "Model (default: mistral)" mdl; [[ -z "${mdl}" ]] && mdl="mistral"
+                prompt_input "Creative writing prompt" msg; ollama_chat "${mdl}" "${msg}" ;;
+            47) prompt_input "Model (default: codellama)" mdl; [[ -z "${mdl}" ]] && mdl="codellama"
+                prompt_input "Paste code to explain" code; ollama_chat "${mdl}" "Explain this code:\n${code}" ;;
+            48) prompt_input "Model (default: deepseek-r1)" mdl; [[ -z "${mdl}" ]] && mdl="deepseek-r1"
+                prompt_input "Enter math or reasoning problem" msg; ollama_chat "${mdl}" "${msg}" ;;
+            49) curl -s "http://${OLLAMA_HOST}:${OLLAMA_PORT}/api/tags" \
+                    | python3 -c "import sys,json; [print(' -',m['name']) for m in json.load(sys.stdin).get('models',[])]" 2>/dev/null \
+                    || error "Cannot reach Ollama" ;;
+            50) curl -s "http://${OLLAMA_HOST}:${OLLAMA_PORT}/api/tags" &>/dev/null \
+                    && success "Ollama is reachable at ${OLLAMA_HOST}:${OLLAMA_PORT}" \
+                    || error "Ollama is NOT reachable at ${OLLAMA_HOST}:${OLLAMA_PORT}" ;;
+            0|q|Q) return ;;
+            *) warn "Invalid option: ${choice}" ;;
+        esac
+        pause
+    done
+}
+
+# =============================================================================
+# SECTION 2: AGENT CONTROL (options 51-100)
+# =============================================================================
+menu_agent_control() {
+    while true; do
+        show_section_banner "Agent Control"
+        printf "${BOLD}${WHITE}  INDIVIDUAL AGENTS${NC}\n\n"
+        print_menu_item 51  "Run CoderAgent"
+        print_menu_item 52  "Run ResearchAgent"
+        print_menu_item 53  "Run PlannerAgent"
+        print_menu_item 54  "Run DevOpsAgent"
+        print_menu_item 55  "Run SecurityAgent"
+        print_menu_item 56  "Run DebuggerAgent"
+        print_menu_item 57  "Run ArchitectAgent"
+        print_menu_item 58  "Run custom agent task"
+        print_menu_item 59  "Run CoderAgent with file"
+        print_menu_item 60  "Run ResearchAgent deep-dive"
+        print_menu_item 61  "Run PlannerAgent project plan"
+        print_menu_item 62  "Run DevOpsAgent pipeline"
+        print_menu_item 63  "Run SecurityAgent full scan"
+        print_menu_item 64  "Run DebuggerAgent on file"
+        print_menu_item 65  "Run ArchitectAgent system design"
+        printf "\n${BOLD}${WHITE}  SWARM CONTROL${NC}\n\n"
+        print_menu_item 66  "Start Swarm"
+        print_menu_item 67  "Stop Swarm"
+        print_menu_item 68  "Get Swarm Status"
+        print_menu_item 69  "Broadcast task to Swarm"
+        print_menu_item 70  "List active swarm agents"
+        print_menu_item 71  "Kill all swarm agents"
+        print_menu_item 72  "Restart Swarm"
+        print_menu_item 73  "Swarm health check"
+        printf "\n${BOLD}${WHITE}  AGENT LOGS & CONFIG${NC}\n\n"
+        print_menu_item 74  "View CoderAgent logs"
+        print_menu_item 75  "View ResearchAgent logs"
+        print_menu_item 76  "View PlannerAgent logs"
+        print_menu_item 77  "View DevOpsAgent logs"
+        print_menu_item 78  "View SecurityAgent logs"
+        print_menu_item 79  "View DebuggerAgent logs"
+        print_menu_item 80  "View ArchitectAgent logs"
+        print_menu_item 81  "View all agent logs (tail)"
+        print_menu_item 82  "Clear agent logs"
+        print_menu_item 83  "Set agent model"
+        print_menu_item 84  "Set agent temperature"
+        print_menu_item 85  "Set agent max tokens"
+        print_menu_item 86  "Export agent results"
+        print_menu_item 87  "Import agent task from file"
+        print_menu_item 88  "List completed agent tasks"
+        print_menu_item 89  "Retry last failed task"
+        print_menu_item 90  "Agent performance stats"
+        printf "\n"
+        print_menu_item  0  "Back to main menu"
+        printf "\n"
+        divider
+        printf "${YELLOW}Select option:${NC} "
+        read -r choice
+        case "${choice}" in
+            51) prompt_input "Enter coding task" task; run_python "agents/coder_agent.py" "${task}" ;;
+            52) prompt_input "Enter research topic" task; run_python "agents/research_agent.py" "${task}" ;;
+            53) prompt_input "Enter planning task" task; run_python "agents/planner_agent.py" "${task}" ;;
+            54) prompt_input "Enter DevOps task" task; run_python "agents/devops_agent.py" "${task}" ;;
+            55) prompt_input "Enter security task" task; run_python "agents/security_agent.py" "${task}" ;;
+            56) prompt_input "Enter debugging task" task; run_python "agents/debugger_agent.py" "${task}" ;;
+            57) prompt_input "Enter architecture task" task; run_python "agents/architect_agent.py" "${task}" ;;
+            58) prompt_input "Enter agent type" atype; prompt_input "Enter task" task
+                run_python "agents/${atype}_agent.py" "${task}" ;;
+            59) prompt_input "Enter file path" fpath; run_python "agents/coder_agent.py" "--file" "${fpath}" ;;
+            60) prompt_input "Enter research topic" task; run_python "agents/research_agent.py" "--deep" "${task}" ;;
+            61) prompt_input "Enter project description" task; run_python "agents/planner_agent.py" "--project" "${task}" ;;
+            62) prompt_input "Enter pipeline spec" task; run_python "agents/devops_agent.py" "--pipeline" "${task}" ;;
+            63) prompt_input "Enter target path" fpath; run_python "agents/security_agent.py" "--scan" "${fpath}" ;;
+            64) prompt_input "Enter file to debug" fpath; run_python "agents/debugger_agent.py" "--file" "${fpath}" ;;
+            65) prompt_input "Enter system requirements" task; run_python "agents/architect_agent.py" "--design" "${task}" ;;
+            66) run_python "agents/swarm_controller.py" "--start" && success "Swarm started" ;;
+            67) run_python "agents/swarm_controller.py" "--stop" && success "Swarm stopped" ;;
+            68) run_python "agents/swarm_controller.py" "--status" ;;
+            69) prompt_input "Enter broadcast message" msg; run_python "agents/swarm_controller.py" "--broadcast" "${msg}" ;;
+            70) run_python "agents/swarm_controller.py" "--list" ;;
+            71) run_python "agents/swarm_controller.py" "--kill-all" ;;
+            72) run_python "agents/swarm_controller.py" "--restart" ;;
+            73) run_python "agents/swarm_controller.py" "--health" ;;
+            74) tail -n 50 "${LOG_DIR}/coder_agent.log" 2>/dev/null || warn "Log not found" ;;
+            75) tail -n 50 "${LOG_DIR}/research_agent.log" 2>/dev/null || warn "Log not found" ;;
+            76) tail -n 50 "${LOG_DIR}/planner_agent.log" 2>/dev/null || warn "Log not found" ;;
+            77) tail -n 50 "${LOG_DIR}/devops_agent.log" 2>/dev/null || warn "Log not found" ;;
+            78) tail -n 50 "${LOG_DIR}/security_agent.log" 2>/dev/null || warn "Log not found" ;;
+            79) tail -n 50 "${LOG_DIR}/debugger_agent.log" 2>/dev/null || warn "Log not found" ;;
+            80) tail -n 50 "${LOG_DIR}/architect_agent.log" 2>/dev/null || warn "Log not found" ;;
+            81) tail -n 100 "${LOG_DIR}"/*.log 2>/dev/null || warn "No logs found" ;;
+            82) printf "${RED}Clear all agent logs? (yes/no):${NC} "; read -r conf
+                [[ "${conf}" == "yes" ]] && rm -f "${LOG_DIR}"/*_agent.log && success "Logs cleared" ;;
+            83) prompt_input "Agent name" aname; prompt_input "Model name" mdl
+                info "Set ${aname} model to ${mdl} (update configs/settings.yaml manually)" ;;
+            84) prompt_input "Agent name" aname; prompt_input "Temperature" temp
+                info "Set ${aname} temperature to ${temp} (update configs/settings.yaml manually)" ;;
+            85) prompt_input "Agent name" aname; prompt_input "Max tokens" maxt
+                info "Set ${aname} max_tokens to ${maxt} (update configs/settings.yaml manually)" ;;
+            86) prompt_input "Output file path" fpath
+                run_python "agents/swarm_controller.py" "--export" "${fpath}" ;;
+            87) prompt_input "Task file path" fpath; run_python "agents/swarm_controller.py" "--import" "${fpath}" ;;
+            88) run_python "agents/swarm_controller.py" "--history" ;;
+            89) run_python "agents/swarm_controller.py" "--retry" ;;
+            90) run_python "agents/swarm_controller.py" "--stats" ;;
+            0|q|Q) return ;;
+            *) warn "Invalid option: ${choice}" ;;
+        esac
+        pause
+    done
+}
+
+# =============================================================================
+# SECTION 3: MODEL MANAGER (options 101-130)
+# =============================================================================
+menu_model_manager() {
+    while true; do
+        show_section_banner "Model Manager"
+        printf "${BOLD}${WHITE}  MODEL OPERATIONS${NC}\n\n"
+        print_menu_item 101 "List all installed models"
+        print_menu_item 102 "Pull a model"
+        print_menu_item 103 "Delete a model"
+        print_menu_item 104 "Model info / details"
+        print_menu_item 105 "Search models on Ollama Hub"
+        print_menu_item 106 "Pull ALL recommended models"
+        print_menu_item 107 "Pull general models"
+        print_menu_item 108 "Pull coding models"
+        print_menu_item 109 "Pull reasoning models"
+        print_menu_item 110 "Pull embedding models"
+        print_menu_item 111 "Pull vision models"
+        print_menu_item 112 "Pull uncensored models"
+        print_menu_item 113 "Update all models"
+        print_menu_item 114 "Check model status"
+        print_menu_item 115 "Copy / duplicate model"
+        print_menu_item 116 "Create model from Modelfile"
+        print_menu_item 117 "Show Modelfile for model"
+        print_menu_item 118 "Set default model"
+        print_menu_item 119 "Benchmark model speed"
+        print_menu_item 120 "List running model instances"
+        print_menu_item 121 "Stop a running model"
+        print_menu_item 122 "Model disk usage"
+        print_menu_item 123 "Export model list to file"
+        print_menu_item 124 "Import model list from file"
+        print_menu_item 125 "Check for model updates"
+        print_menu_item 126 "Model parameter count"
+        print_menu_item 127 "Test model response time"
+        print_menu_item 128 "Pull model by digest"
+        print_menu_item 129 "List model families"
+        print_menu_item 130 "Generate model report"
+        printf "\n"
+        print_menu_item   0 "Back to main menu"
+        printf "\n"
+        divider
+        printf "${YELLOW}Select option:${NC} "
+        read -r choice
+        case "${choice}" in
+            101) run_python "models/model_manager.py" "--list" ;;
+            102) prompt_input "Enter model name to pull" mdl; run_python "models/model_manager.py" "--pull" "${mdl}" ;;
+            103) prompt_input "Enter model name to delete" mdl
+                 printf "${RED}Delete ${mdl}? (yes/no):${NC} "; read -r conf
+                 [[ "${conf}" == "yes" ]] && run_python "models/model_manager.py" "--delete" "${mdl}" ;;
+            104) prompt_input "Enter model name" mdl; run_python "models/model_manager.py" "--info" "${mdl}" ;;
+            105) prompt_input "Search term" term; run_python "models/model_manager.py" "--search" "${term}" ;;
+            106) bash "${BASE_DIR}/scripts/pull_models.sh" "--all" 2>/dev/null \
+                    || run_python "models/model_manager.py" "--pull-all" ;;
+            107) run_python "models/model_manager.py" "--pull-category" "general" ;;
+            108) run_python "models/model_manager.py" "--pull-category" "coding" ;;
+            109) run_python "models/model_manager.py" "--pull-category" "reasoning" ;;
+            110) run_python "models/model_manager.py" "--pull-category" "embedding" ;;
+            111) run_python "models/model_manager.py" "--pull-category" "vision" ;;
+            112) run_python "models/model_manager.py" "--pull-category" "uncensored" ;;
+            113) bash "${BASE_DIR}/scripts/update_models.sh" 2>/dev/null \
+                    || run_python "models/model_manager.py" "--update-all" ;;
+            114) run_python "models/model_manager.py" "--status" ;;
+            115) prompt_input "Source model" src; prompt_input "Destination model name" dst
+                 curl -s -X POST "http://${OLLAMA_HOST}:${OLLAMA_PORT}/api/copy" \
+                     -d "{\"source\":\"${src}\",\"destination\":\"${dst}\"}" && success "Copied ${src} to ${dst}" ;;
+            116) prompt_input "Enter Modelfile path" mfpath
+                 prompt_input "Enter new model name" mdl
+                 curl -s -X POST "http://${OLLAMA_HOST}:${OLLAMA_PORT}/api/create" \
+                     -d "{\"name\":\"${mdl}\",\"modelfile\":\"$(cat "${mfpath}" 2>/dev/null | tr -d '\n')\"}" && success "Model created" ;;
+            117) prompt_input "Enter model name" mdl
+                 curl -s -X POST "http://${OLLAMA_HOST}:${OLLAMA_PORT}/api/show" \
+                     -d "{\"name\":\"${mdl}\"}" \
+                     | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('modelfile',''))" 2>/dev/null ;;
+            118) prompt_input "Enter model name to set as default" mdl
+                 info "Default model set to ${mdl} — update configs/settings.yaml if needed" ;;
+            119) prompt_input "Model to benchmark" mdl
+                 printf "${WHITE}Running benchmark...${NC}\n"
+                 start_t=$(date +%s%N)
+                 ollama_chat "${mdl}" "Count from 1 to 10." > /dev/null
+                 end_t=$(date +%s%N)
+                 elapsed=$(( (end_t - start_t) / 1000000 ))
+                 printf "${GREEN}Response time: %dms${NC}\n" "${elapsed}" ;;
+            120) curl -s "http://${OLLAMA_HOST}:${OLLAMA_PORT}/api/ps" \
+                     | python3 -c "import sys,json; [print(m['name']) for m in json.load(sys.stdin).get('models',[])]" 2>/dev/null ;;
+            121) prompt_input "Model name to stop" mdl
+                 curl -s -X DELETE "http://${OLLAMA_HOST}:${OLLAMA_PORT}/api/delete" \
+                     -d "{\"name\":\"${mdl}\"}" && info "Stop request sent for ${mdl}" ;;
+            122) du -sh "${BASE_DIR}"/.ollama/models 2>/dev/null \
+                     || du -sh /root/.ollama/models 2>/dev/null \
+                     || du -sh ~/.ollama/models 2>/dev/null \
+                     || info "Could not determine model storage path" ;;
+            123) prompt_input "Output file path" fpath
+                 run_python "models/model_manager.py" "--list" > "${fpath}" && success "Saved to ${fpath}" ;;
+            124) prompt_input "Model list file path" fpath
+                 [[ -f "${fpath}" ]] && while IFS= read -r mdl; do
+                     [[ -n "${mdl}" ]] && run_python "models/model_manager.py" "--pull" "${mdl}"
+                 done < "${fpath}" || error "File not found" ;;
+            125) run_python "models/model_manager.py" "--check-updates" ;;
+            126) prompt_input "Enter model name" mdl
+                 curl -s -X POST "http://${OLLAMA_HOST}:${OLLAMA_PORT}/api/show" \
+                     -d "{\"name\":\"${mdl}\"}" \
+                     | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps(d.get('details',{}),indent=2))" 2>/dev/null ;;
+            127) prompt_input "Model to test" mdl
+                 for i in 1 2 3; do
+                     st=$(date +%s%N)
+                     ollama_chat "${mdl}" "Say hello." > /dev/null
+                     et=$(date +%s%N)
+                     printf "  Run %d: %dms\n" "${i}" "$(( (et - st) / 1000000 ))"
+                 done ;;
+            128) prompt_input "Model digest" digest; run_python "models/model_manager.py" "--pull-digest" "${digest}" ;;
+            129) curl -s "http://${OLLAMA_HOST}:${OLLAMA_PORT}/api/tags" \
+                     | python3 -c "
+import sys, json
+models = json.load(sys.stdin).get('models', [])
+families = set()
+for m in models:
+    name = m['name'].split(':')[0]
+    families.add(name)
+for f in sorted(families):
+    print(' -', f)
+" 2>/dev/null ;;
+            130) run_python "models/model_manager.py" "--report" ;;
+            0|q|Q) return ;;
+            *) warn "Invalid option: ${choice}" ;;
+        esac
+        pause
+    done
+}
+
+# =============================================================================
+# SECTION 4: AUTO-CODE (options 131-150)
+# =============================================================================
+menu_autocode() {
+    while true; do
+        show_section_banner "Auto-Code"
+        print_menu_item 131 "Generate code from description"
+        print_menu_item 132 "Improve existing code"
+        print_menu_item 133 "Write generated code to file"
+        print_menu_item 134 "Review code for issues"
+        print_menu_item 135 "Generate unit tests"
+        print_menu_item 136 "Run tests"
+        print_menu_item 137 "Check syntax"
+        print_menu_item 138 "Lint code"
+        print_menu_item 139 "Refactor code"
+        print_menu_item 140 "Document code (add docstrings)"
+        print_menu_item 141 "Generate code from file spec"
+        print_menu_item 142 "Fix bugs in file"
+        print_menu_item 143 "Translate code to another language"
+        print_menu_item 144 "Optimise code for performance"
+        print_menu_item 145 "Security audit code"
+        print_menu_item 146 "Generate API from description"
+        print_menu_item 147 "Generate Dockerfile"
+        print_menu_item 148 "Generate CI/CD pipeline YAML"
+        print_menu_item 149 "Generate SQL from description"
+        print_menu_item 150 "Code explanation / walkthrough"
+        printf "\n"
+        print_menu_item   0 "Back to main menu"
+        printf "\n"
+        divider
+        printf "${YELLOW}Select option:${NC} "
+        read -r choice
+        case "${choice}" in
+            131) prompt_input "Describe the code to generate" desc
+                 run_python "autocode/autocode_engine.py" "--generate" "${desc}" ;;
+            132) prompt_input "Enter file path to improve" fpath
+                 run_python "autocode/autocode_engine.py" "--improve" "${fpath}" ;;
+            133) prompt_input "Describe the code" desc; prompt_input "Output file path" fpath
+                 run_python "autocode/autocode_engine.py" "--write" "${desc}" "${fpath}" ;;
+            134) prompt_input "Enter file path to review" fpath
+                 run_python "autocode/autocode_engine.py" "--review" "${fpath}" ;;
+            135) prompt_input "Enter file path to generate tests for" fpath
+                 run_python "autocode/autocode_engine.py" "--gen-tests" "${fpath}" ;;
+            136) prompt_input "Test file or directory" tpath
+                 run_python "autocode/test_runner.py" "${tpath}" ;;
+            137) prompt_input "File to syntax-check" fpath
+                 case "${fpath##*.}" in
+                     py)   python3 -m py_compile "${fpath}" && success "Syntax OK" || error "Syntax error" ;;
+                     sh)   bash -n "${fpath}" && success "Syntax OK" || error "Syntax error" ;;
+                     js)   node --check "${fpath}" 2>/dev/null && success "Syntax OK" || error "Syntax error" ;;
+                     *)    file "${fpath}" ;;
+                 esac ;;
+            138) prompt_input "File to lint" fpath
+                 case "${fpath##*.}" in
+                     py)  python3 -m flake8 "${fpath}" 2>/dev/null || python3 -m pylint "${fpath}" 2>/dev/null || warn "No Python linter found" ;;
+                     sh)  shellcheck "${fpath}" 2>/dev/null || warn "shellcheck not installed" ;;
+                     js)  npx eslint "${fpath}" 2>/dev/null || warn "eslint not found" ;;
+                     *)   warn "No linter configured for this file type" ;;
+                 esac ;;
+            139) prompt_input "Enter file path to refactor" fpath
+                 run_python "autocode/autocode_engine.py" "--refactor" "${fpath}" ;;
+            140) prompt_input "Enter file path to document" fpath
+                 run_python "autocode/autocode_engine.py" "--document" "${fpath}" ;;
+            141) prompt_input "Specification file path" fpath
+                 run_python "autocode/autocode_engine.py" "--from-spec" "${fpath}" ;;
+            142) prompt_input "File with bugs to fix" fpath
+                 run_python "autocode/autocode_engine.py" "--fix" "${fpath}" ;;
+            143) prompt_input "Source file" fpath; prompt_input "Target language" lang
+                 run_python "autocode/autocode_engine.py" "--translate" "${fpath}" "${lang}" ;;
+            144) prompt_input "File to optimise" fpath
+                 run_python "autocode/autocode_engine.py" "--optimise" "${fpath}" ;;
+            145) prompt_input "File for security audit" fpath
+                 run_python "autocode/autocode_engine.py" "--security" "${fpath}" ;;
+            146) prompt_input "Describe the API" desc
+                 run_python "autocode/autocode_engine.py" "--gen-api" "${desc}" ;;
+            147) prompt_input "Describe the application" desc
+                 run_python "autocode/autocode_engine.py" "--gen-dockerfile" "${desc}" ;;
+            148) prompt_input "Describe the pipeline" desc
+                 run_python "autocode/autocode_engine.py" "--gen-cicd" "${desc}" ;;
+            149) prompt_input "Describe the SQL query needed" desc
+                 run_python "autocode/autocode_engine.py" "--gen-sql" "${desc}" ;;
+            150) prompt_input "File to explain" fpath
+                 run_python "autocode/autocode_engine.py" "--explain" "${fpath}" ;;
+            0|q|Q) return ;;
+            *) warn "Invalid option: ${choice}" ;;
+        esac
+        pause
+    done
+}
+
+# =============================================================================
+# SECTION 5: CLUSTER CONTROL (options 151-175)
+# =============================================================================
+menu_cluster_control() {
+    while true; do
+        show_section_banner "Cluster Control"
+        print_menu_item 151 "Cluster status overview"
+        print_menu_item 152 "Add node to cluster"
+        print_menu_item 153 "Remove node from cluster"
+        print_menu_item 154 "Node health check"
+        print_menu_item 155 "Replicate model to all nodes"
+        print_menu_item 156 "GPU scheduler status"
+        print_menu_item 157 "Schedule GPU job"
+        print_menu_item 158 "Release GPU job"
+        print_menu_item 159 "Join this machine to cluster"
+        print_menu_item 160 "Leave cluster"
+        print_menu_item 161 "Cluster report"
+        print_menu_item 162 "List cluster nodes"
+        print_menu_item 163 "Ping all cluster nodes"
+        print_menu_item 164 "Node resource usage"
+        print_menu_item 165 "Load balancer status"
+        print_menu_item 166 "Set load balancing strategy"
+        print_menu_item 167 "Cluster network topology"
+        print_menu_item 168 "Failover test"
+        print_menu_item 169 "Sync models across cluster"
+        print_menu_item 170 "Cluster logs"
+        print_menu_item 171 "Node logs (specific node)"
+        print_menu_item 172 "Restart cluster service"
+        print_menu_item 173 "Cluster config editor"
+        print_menu_item 174 "Benchmark cluster throughput"
+        print_menu_item 175 "Export cluster config"
+        printf "\n"
+        print_menu_item   0 "Back to main menu"
+        printf "\n"
+        divider
+        printf "${YELLOW}Select option:${NC} "
+        read -r choice
+        case "${choice}" in
+            151) run_python "cluster/cluster_status.py" "--overview" ;;
+            152) prompt_input "Node hostname/IP" node; run_python "cluster/ollama_cluster_manager.py" "--add-node" "${node}" ;;
+            153) prompt_input "Node hostname/IP to remove" node; run_python "cluster/ollama_cluster_manager.py" "--remove-node" "${node}" ;;
+            154) run_python "cluster/cluster_status.py" "--health" ;;
+            155) prompt_input "Model name to replicate" mdl; run_python "cluster/ollama_cluster_manager.py" "--replicate" "${mdl}" ;;
+            156) run_python "cluster/gpu_scheduler.py" "--status" ;;
+            157) prompt_input "Job description" job; run_python "cluster/gpu_scheduler.py" "--schedule" "${job}" ;;
+            158) prompt_input "Job ID to release" jid; run_python "cluster/gpu_scheduler.py" "--release" "${jid}" ;;
+            159) bash "${BASE_DIR}/cluster/node_join.sh" 2>/dev/null || run_python "cluster/ollama_cluster_manager.py" "--join" ;;
+            160) run_python "cluster/ollama_cluster_manager.py" "--leave" ;;
+            161) run_python "cluster/cluster_status.py" "--report" ;;
+            162) run_python "cluster/cluster_status.py" "--list-nodes" ;;
+            163) run_python "cluster/cluster_status.py" "--ping-all" ;;
+            164) run_python "cluster/cluster_status.py" "--resources" ;;
+            165) run_python "cluster/ollama_cluster_manager.py" "--lb-status" ;;
+            166) prompt_input "Strategy (round-robin/least-loaded/gpu-first)" strat
+                 run_python "cluster/ollama_cluster_manager.py" "--lb-strategy" "${strat}" ;;
+            167) run_python "cluster/cluster_status.py" "--topology" ;;
+            168) run_python "cluster/cluster_status.py" "--failover-test" ;;
+            169) run_python "cluster/ollama_cluster_manager.py" "--sync-models" ;;
+            170) tail -n 100 "${LOG_DIR}/cluster.log" 2>/dev/null || warn "No cluster log found" ;;
+            171) prompt_input "Node hostname/IP" node; run_python "cluster/cluster_status.py" "--node-logs" "${node}" ;;
+            172) systemctl restart melvin-cluster 2>/dev/null || run_python "cluster/ollama_cluster_manager.py" "--restart" ;;
+            173) "${EDITOR:-nano}" "${BASE_DIR}/configs/cluster.yaml" 2>/dev/null || warn "No cluster config found" ;;
+            174) run_python "cluster/cluster_status.py" "--benchmark" ;;
+            175) prompt_input "Output file path" fpath; run_python "cluster/ollama_cluster_manager.py" "--export-config" "${fpath}" ;;
+            0|q|Q) return ;;
+            *) warn "Invalid option: ${choice}" ;;
+        esac
+        pause
+    done
+}
+
+# =============================================================================
+# SECTION 6: WEB UI (options 176-185)
+# =============================================================================
+menu_webui() {
+    while true; do
+        show_section_banner "Web UI"
+        print_menu_item 176 "Start Web UI"
+        print_menu_item 177 "Stop Web UI"
+        print_menu_item 178 "Restart Web UI"
+        print_menu_item 179 "Open browser (localhost)"
+        print_menu_item 180 "View Web UI logs"
+        print_menu_item 181 "Change port"
+        print_menu_item 182 "Enable HTTPS"
+        print_menu_item 183 "Web UI status"
+        print_menu_item 184 "View active sessions"
+        print_menu_item 185 "Regenerate secret key"
+        printf "\n"
+        print_menu_item   0 "Back to main menu"
+        printf "\n"
+        divider
+        printf "${YELLOW}Select option:${NC} "
+        read -r choice
+        case "${choice}" in
+            176) systemctl start melvin-webui 2>/dev/null || \
+                     (nohup "${VENV_PYTHON}" "${BASE_DIR}/webui/app.py" >> "${LOG_DIR}/webui.log" 2>&1 &
+                      success "Web UI started on port ${WEBUI_PORT} (PID $!)") ;;
+            177) systemctl stop melvin-webui 2>/dev/null || \
+                     pkill -f "webui/app.py" 2>/dev/null && success "Web UI stopped" || warn "Not running" ;;
+            178) systemctl restart melvin-webui 2>/dev/null || {
+                     pkill -f "webui/app.py" 2>/dev/null || true
+                     sleep 1
+                     nohup "${VENV_PYTHON}" "${BASE_DIR}/webui/app.py" >> "${LOG_DIR}/webui.log" 2>&1 &
+                     success "Web UI restarted (PID $!)"
+                 } ;;
+            179) xdg-open "http://localhost:${WEBUI_PORT}" 2>/dev/null \
+                     || open "http://localhost:${WEBUI_PORT}" 2>/dev/null \
+                     || info "Open http://localhost:${WEBUI_PORT} in your browser" ;;
+            180) tail -n 100 "${LOG_DIR}/webui.log" 2>/dev/null || warn "No webui log found" ;;
+            181) prompt_input "Enter new port number" newport
+                 sed -i "s/port:.*/port: ${newport}/" "${BASE_DIR}/configs/settings.yaml" 2>/dev/null
+                 WEBUI_PORT="${newport}"
+                 success "Port set to ${newport} — restart Web UI to apply" ;;
+            182) info "Enabling HTTPS requires an SSL certificate."
+                 prompt_input "Certificate file path" certfile
+                 prompt_input "Key file path" keyfile
+                 sed -i "s/ssl_cert:.*/ssl_cert: ${certfile}/" "${BASE_DIR}/configs/settings.yaml" 2>/dev/null
+                 sed -i "s/ssl_key:.*/ssl_key: ${keyfile}/" "${BASE_DIR}/configs/settings.yaml" 2>/dev/null
+                 success "HTTPS configured — restart Web UI to apply" ;;
+            183) check_service melvin-webui || \
+                     (pgrep -f "webui/app.py" > /dev/null 2>&1 && success "webui/app.py is running" || warn "Web UI is not running") ;;
+            184) run_python "webui/api.py" "--sessions" ;;
+            185) newsecret=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+                 sed -i "s/secret_key:.*/secret_key: \"${newsecret}\"/" "${BASE_DIR}/configs/settings.yaml" 2>/dev/null
+                 success "New secret key generated — restart Web UI to apply" ;;
+            0|q|Q) return ;;
+            *) warn "Invalid option: ${choice}" ;;
+        esac
+        pause
+    done
+}
+
+# =============================================================================
+# SECTION 7: VOICE AI (options 186-195)
+# =============================================================================
+menu_voice_ai() {
+    while true; do
+        show_section_banner "Voice AI"
+        print_menu_item 186 "Start Voice Jarvis"
+        print_menu_item 187 "Stop Voice Jarvis"
+        print_menu_item 188 "Test microphone"
+        print_menu_item 189 "Test TTS (text-to-speech)"
+        print_menu_item 190 "Configure wake word"
+        print_menu_item 191 "View Voice Jarvis logs"
+        print_menu_item 192 "List available microphones"
+        print_menu_item 193 "List available TTS voices"
+        print_menu_item 194 "Voice AI status"
+        print_menu_item 195 "Configure voice AI model"
+        printf "\n"
+        print_menu_item   0 "Back to main menu"
+        printf "\n"
+        divider
+        printf "${YELLOW}Select option:${NC} "
+        read -r choice
+        case "${choice}" in
+            186) nohup "${VENV_PYTHON}" "${BASE_DIR}/voice/voice_jarvis.py" >> "${LOG_DIR}/voice_jarvis.log" 2>&1 &
+                 success "Voice Jarvis started (PID $!)" ;;
+            187) pkill -f "voice_jarvis.py" 2>/dev/null && success "Voice Jarvis stopped" || warn "Not running" ;;
+            188) run_python "voice/voice_jarvis.py" "--test-mic" ;;
+            189) prompt_input "Enter text to speak" tts_text
+                 run_python "voice/voice_jarvis.py" "--tts" "${tts_text}" ;;
+            190) prompt_input "Enter new wake word" wword
+                 run_python "voice/voice_jarvis.py" "--set-wake-word" "${wword}" ;;
+            191) tail -n 100 "${LOG_DIR}/voice_jarvis.log" 2>/dev/null || warn "No voice log found" ;;
+            192) run_python "voice/voice_jarvis.py" "--list-mics" ;;
+            193) run_python "voice/voice_jarvis.py" "--list-voices" ;;
+            194) pgrep -f "voice_jarvis.py" > /dev/null 2>&1 \
+                     && success "Voice Jarvis is running" || warn "Voice Jarvis is NOT running" ;;
+            195) prompt_input "Model name for voice AI" mdl
+                 run_python "voice/voice_jarvis.py" "--set-model" "${mdl}" ;;
+            0|q|Q) return ;;
+            *) warn "Invalid option: ${choice}" ;;
+        esac
+        pause
+    done
+}
+
+# =============================================================================
+# SECTION 8: SYSTEM MONITORING (options 196-220)
+# =============================================================================
+menu_system_monitoring() {
+    while true; do
+        show_section_banner "System Monitoring"
+        printf "${BOLD}${WHITE}  CPU / MEMORY / DISK${NC}\n\n"
+        print_menu_item 196 "CPU stats"
+        print_menu_item 197 "Memory stats"
+        print_menu_item 198 "Disk stats"
+        print_menu_item 199 "Network stats"
+        printf "\n${BOLD}${WHITE}  GPU${NC}\n\n"
+        print_menu_item 200 "GPU stats (nvidia-smi)"
+        print_menu_item 201 "GPU memory usage"
+        print_menu_item 202 "GPU processes"
+        print_menu_item 203 "GPU temperature"
+        print_menu_item 204 "GPU utilisation (live)"
+        printf "\n${BOLD}${WHITE}  PROCESSES${NC}\n\n"
+        print_menu_item 205 "Process list (ps aux)"
+        print_menu_item 206 "Top processes (top snapshot)"
+        print_menu_item 207 "IO top (iotop)"
+        print_menu_item 208 "Network top (nethogs)"
+        printf "\n${BOLD}${WHITE}  SYSTEM INFO${NC}\n\n"
+        print_menu_item 209 "System info (uname / lscpu)"
+        print_menu_item 210 "Uptime"
+        print_menu_item 211 "Kernel info"
+        print_menu_item 212 "OS release info"
+        print_menu_item 213 "Loaded kernel modules"
+        printf "\n${BOLD}${WHITE}  CONTAINERS${NC}\n\n"
+        print_menu_item 214 "Container stats (docker stats)"
+        print_menu_item 215 "Docker ps (running containers)"
+        print_menu_item 216 "Docker images"
+        print_menu_item 217 "Docker logs (container)"
+        print_menu_item 218 "Melvin services status"
+        print_menu_item 219 "Full system dashboard (Python)"
+        print_menu_item 220 "Monitor mode (live, 2s refresh)"
+        printf "\n"
+        print_menu_item   0 "Back to main menu"
+        printf "\n"
+        divider
+        printf "${YELLOW}Select option:${NC} "
+        read -r choice
+        case "${choice}" in
+            196) printf "${BOLD}CPU:${NC}\n"; lscpu | grep -E "^(CPU\(s\)|Model name|MHz|Cache)" 2>/dev/null
+                 printf "\n${BOLD}CPU Usage:${NC}\n"; top -bn1 | grep "Cpu(s)" 2>/dev/null ;;
+            197) free -h ;;
+            198) df -hT | grep -v tmpfs ;;
+            199) ip -s link 2>/dev/null || ifconfig 2>/dev/null ;;
+            200) nvidia-smi 2>/dev/null || run_python "dashboard/gpu_monitor.py" "--stats" ;;
+            201) nvidia-smi --query-gpu=memory.used,memory.free,memory.total --format=csv,noheader 2>/dev/null \
+                     || run_python "dashboard/gpu_monitor.py" "--memory" ;;
+            202) nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv 2>/dev/null \
+                     || run_python "dashboard/gpu_monitor.py" "--processes" ;;
+            203) nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null \
+                     || run_python "dashboard/gpu_monitor.py" "--temperature" ;;
+            204) watch -n 1 "nvidia-smi --query-gpu=utilization.gpu,utilization.memory --format=csv" 2>/dev/null \
+                     || run_python "dashboard/gpu_monitor.py" "--live" ;;
+            205) ps aux --sort=-%cpu | head -25 ;;
+            206) top -bn1 | head -30 ;;
+            207) iotop -b -n 1 2>/dev/null || warn "iotop not installed" ;;
+            208) nethogs -c 3 2>/dev/null || warn "nethogs not installed" ;;
+            209) printf "${BOLD}Uname:${NC} "; uname -a
+                 printf "\n${BOLD}CPU:${NC}\n"; lscpu 2>/dev/null | head -15 ;;
+            210) uptime ;;
+            211) uname -r; printf "\n"; uname -v ;;
+            212) cat /etc/os-release 2>/dev/null || cat /etc/redhat-release 2>/dev/null ;;
+            213) lsmod | head -30 ;;
+            214) docker stats --no-stream 2>/dev/null || warn "Docker not running or not installed" ;;
+            215) docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null \
+                     || warn "Docker not running" ;;
+            216) docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" 2>/dev/null \
+                     || warn "Docker not available" ;;
+            217) prompt_input "Container name or ID" cname
+                 docker logs --tail 50 "${cname}" 2>/dev/null || warn "Container not found" ;;
+            218) for svc in melvin-webui melvin-cluster ollama melvin-healer; do
+                     check_service "${svc}"
+                 done ;;
+            219) run_python "dashboard/system_monitor.py" ;;
+            220) run_python "dashboard/system_monitor.py" "--live" ;;
+            0|q|Q) return ;;
+            *) warn "Invalid option: ${choice}" ;;
+        esac
+        pause
+    done
+}
+
+# =============================================================================
+# SECTION 9: HEALING (options 221-230)
+# =============================================================================
+menu_healing() {
+    while true; do
+        show_section_banner "Healing"
+        print_menu_item 221 "Start Healer"
+        print_menu_item 222 "Stop Healer"
+        print_menu_item 223 "Healing report"
+        print_menu_item 224 "Force heal all"
+        print_menu_item 225 "View healing logs"
+        print_menu_item 226 "Configure healing interval"
+        print_menu_item 227 "Healer status"
+        print_menu_item 228 "List monitored services"
+        print_menu_item 229 "Add service to monitoring"
+        print_menu_item 230 "Remove service from monitoring"
+        printf "\n"
+        print_menu_item   0 "Back to main menu"
+        printf "\n"
+        divider
+        printf "${YELLOW}Select option:${NC} "
+        read -r choice
+        case "${choice}" in
+            221) systemctl start melvin-healer 2>/dev/null || \
+                     (nohup "${VENV_PYTHON}" "${BASE_DIR}/healing/container_healer.py" >> "${LOG_DIR}/healer.log" 2>&1 &
+                      success "Healer started (PID $!)") ;;
+            222) systemctl stop melvin-healer 2>/dev/null || \
+                     pkill -f "container_healer.py" 2>/dev/null && success "Healer stopped" || warn "Not running" ;;
+            223) run_python "healing/container_healer.py" "--report" ;;
+            224) run_python "healing/container_healer.py" "--force-heal" ;;
+            225) tail -n 100 "${LOG_DIR}/healer.log" 2>/dev/null || warn "No healer log found" ;;
+            226) prompt_input "Interval in seconds" interval
+                 run_python "healing/container_healer.py" "--set-interval" "${interval}" ;;
+            227) check_service melvin-healer || \
+                     (pgrep -f "container_healer.py" > /dev/null 2>&1 \
+                      && success "Healer is running" || warn "Healer is NOT running") ;;
+            228) run_python "healing/container_healer.py" "--list-services" ;;
+            229) prompt_input "Service name to monitor" svc
+                 run_python "healing/container_healer.py" "--add-service" "${svc}" ;;
+            230) prompt_input "Service name to remove" svc
+                 run_python "healing/container_healer.py" "--remove-service" "${svc}" ;;
+            0|q|Q) return ;;
+            *) warn "Invalid option: ${choice}" ;;
+        esac
+        pause
+    done
+}
+
+# =============================================================================
+# SECTION 10: NETWORKING TOOLS (options 231-265)
+# =============================================================================
+menu_networking_tools() {
+    while true; do
+        show_section_banner "Networking Tools"
+        printf "${BOLD}${WHITE}  NMAP${NC}\n\n"
+        print_menu_item 231 "Nmap quick scan"
+        print_menu_item 232 "Nmap full port scan"
+        print_menu_item 233 "Nmap stealth scan (SYN)"
+        print_menu_item 234 "Nmap UDP scan"
+        print_menu_item 235 "Nmap version detection"
+        print_menu_item 236 "Nmap OS fingerprinting"
+        print_menu_item 237 "Nmap vulnerability scan (vuln scripts)"
+        printf "\n${BOLD}${WHITE}  WEB SCANNERS${NC}\n\n"
+        print_menu_item 238 "Masscan fast port scan"
+        print_menu_item 239 "Nikto web vulnerability scan"
+        print_menu_item 240 "Gobuster directory bruteforce"
+        print_menu_item 241 "FFuf web fuzzing"
+        print_menu_item 242 "Dirsearch directory search"
+        print_menu_item 243 "Whatweb web fingerprint"
+        printf "\n${BOLD}${WHITE}  DNS${NC}\n\n"
+        print_menu_item 244 "Amass subdomain enumeration"
+        print_menu_item 245 "DNSenum enumeration"
+        print_menu_item 246 "DNSrecon reconnaissance"
+        print_menu_item 247 "DNS lookup (nslookup)"
+        print_menu_item 248 "Reverse DNS lookup"
+        print_menu_item 249 "Zone transfer attempt"
+        printf "\n${BOLD}${WHITE}  OSINT & MISC${NC}\n\n"
+        print_menu_item 250 "TheHarvester OSINT"
+        print_menu_item 251 "Whois lookup"
+        print_menu_item 252 "SSL/TLS certificate check"
+        print_menu_item 253 "Curl with custom headers"
+        print_menu_item 254 "Ping sweep (subnet)"
+        print_menu_item 255 "Traceroute"
+        print_menu_item 256 "ARP scan (local network)"
+        print_menu_item 257 "Netstat / ss active connections"
+        print_menu_item 258 "Port check (nc / netcat)"
+        print_menu_item 259 "HTTP headers check"
+        print_menu_item 260 "Shodan host lookup (CLI)"
+        print_menu_item 261 "ICMP flood test (local)"
+        print_menu_item 262 "Bandwidth test (iperf3)"
+        print_menu_item 263 "WiFi networks (nmcli)"
+        print_menu_item 264 "IP geolocation lookup"
+        print_menu_item 265 "Network routing table"
+        printf "\n"
+        print_menu_item   0 "Back to main menu"
+        printf "\n"
+        divider
+        printf "${YELLOW}Select option:${NC} "
+        read -r choice
+        case "${choice}" in
+            231) prompt_input "Target (IP/hostname/range)" tgt
+                 nmap -T4 -F "${tgt}" 2>/dev/null || warn "nmap not installed" ;;
+            232) prompt_input "Target" tgt
+                 nmap -T4 -p- "${tgt}" 2>/dev/null || warn "nmap not installed" ;;
+            233) prompt_input "Target" tgt
+                 nmap -sS -T4 "${tgt}" 2>/dev/null || warn "nmap not installed (needs root)" ;;
+            234) prompt_input "Target" tgt
+                 nmap -sU -T4 "${tgt}" 2>/dev/null || warn "nmap not installed" ;;
+            235) prompt_input "Target" tgt
+                 nmap -sV -T4 "${tgt}" 2>/dev/null || warn "nmap not installed" ;;
+            236) prompt_input "Target" tgt
+                 nmap -O "${tgt}" 2>/dev/null || warn "nmap not installed (needs root)" ;;
+            237) prompt_input "Target" tgt
+                 nmap --script vuln "${tgt}" 2>/dev/null || warn "nmap not installed" ;;
+            238) prompt_input "Target (IP/range)" tgt; prompt_input "Port range (e.g. 1-65535)" ports
+                 masscan "${tgt}" -p "${ports}" 2>/dev/null || warn "masscan not installed" ;;
+            239) prompt_input "Target URL" tgt
+                 nikto -h "${tgt}" 2>/dev/null || warn "nikto not installed" ;;
+            240) prompt_input "Target URL" tgt; prompt_input "Wordlist path" wlist
+                 gobuster dir -u "${tgt}" -w "${wlist}" 2>/dev/null || warn "gobuster not installed" ;;
+            241) prompt_input "Target URL" tgt; prompt_input "Wordlist path" wlist
+                 ffuf -u "${tgt}/FUZZ" -w "${wlist}" 2>/dev/null || warn "ffuf not installed" ;;
+            242) prompt_input "Target URL" tgt
+                 dirsearch -u "${tgt}" 2>/dev/null || warn "dirsearch not installed" ;;
+            243) prompt_input "Target URL" tgt
+                 whatweb "${tgt}" 2>/dev/null || warn "whatweb not installed" ;;
+            244) prompt_input "Domain" dom
+                 amass enum -d "${dom}" 2>/dev/null || warn "amass not installed" ;;
+            245) prompt_input "Domain" dom
+                 dnsenum "${dom}" 2>/dev/null || warn "dnsenum not installed" ;;
+            246) prompt_input "Domain" dom
+                 dnsrecon -d "${dom}" 2>/dev/null || warn "dnsrecon not installed" ;;
+            247) prompt_input "Domain or IP" dom
+                 nslookup "${dom}" 2>/dev/null || host "${dom}" 2>/dev/null ;;
+            248) prompt_input "IP address" ip_addr
+                 nslookup "${ip_addr}" 2>/dev/null || host "${ip_addr}" 2>/dev/null ;;
+            249) prompt_input "Domain for zone transfer" dom; prompt_input "Name server" ns
+                 dig @"${ns}" "${dom}" AXFR 2>/dev/null || warn "dig not installed" ;;
+            250) prompt_input "Domain or company" dom
+                 theHarvester -d "${dom}" -b google 2>/dev/null \
+                     || theharvester -d "${dom}" -b google 2>/dev/null \
+                     || warn "theHarvester not installed" ;;
+            251) prompt_input "Domain or IP" tgt
+                 whois "${tgt}" 2>/dev/null || warn "whois not installed" ;;
+            252) prompt_input "Domain or IP:port (default 443)" tgt
+                 [[ "${tgt}" != *":"* ]] && tgt="${tgt}:443"
+                 echo | openssl s_client -connect "${tgt}" 2>/dev/null | openssl x509 -noout -text 2>/dev/null \
+                     || warn "openssl not installed" ;;
+            253) prompt_input "URL" url; prompt_input "Header (key: value)" hdr
+                 curl -v -H "${hdr}" "${url}" 2>/dev/null ;;
+            254) prompt_input "Subnet (e.g. 192.168.1.0/24)" subnet
+                 nmap -sn "${subnet}" 2>/dev/null || \
+                     (IFS=/ read -r base mask <<< "${subnet}"
+                      for i in $(seq 1 254); do
+                          ping -c 1 -W 1 "${base%.*}.${i}" &>/dev/null && printf "UP: %s.%d\n" "${base%.*}" "${i}" &
+                      done; wait) ;;
+            255) prompt_input "Target" tgt
+                 traceroute "${tgt}" 2>/dev/null || tracepath "${tgt}" 2>/dev/null ;;
+            256) arp-scan --localnet 2>/dev/null || arp -a 2>/dev/null || warn "arp-scan not installed" ;;
+            257) ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null ;;
+            258) prompt_input "Host" hst; prompt_input "Port" prt
+                 nc -zv "${hst}" "${prt}" 2>/dev/null || timeout 3 bash -c ">/dev/tcp/${hst}/${prt}" && success "Port ${prt} is open" || warn "Port ${prt} is closed" ;;
+            259) prompt_input "URL" url
+                 curl -sI "${url}" 2>/dev/null ;;
+            260) prompt_input "IP address" ip_addr
+                 shodan host "${ip_addr}" 2>/dev/null \
+                     || curl -s "https://internetdb.shodan.io/${ip_addr}" 2>/dev/null \
+                     | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps(d,indent=2))" 2>/dev/null \
+                     || warn "shodan CLI not installed" ;;
+            261) warn "Use only on systems you own. Ping test only."
+                 prompt_input "Local IP to test" lip
+                 ping -c 5 -f "${lip}" 2>/dev/null || warn "Flood ping requires root" ;;
+            262) prompt_input "Server IP (run iperf3 -s there first)" srv
+                 iperf3 -c "${srv}" 2>/dev/null || warn "iperf3 not installed" ;;
+            263) nmcli dev wifi 2>/dev/null || iwlist scan 2>/dev/null | head -50 ;;
+            264) prompt_input "IP address" ip_addr
+                 curl -s "https://ipapi.co/${ip_addr}/json/" 2>/dev/null \
+                     | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps(d,indent=2))" 2>/dev/null \
+                     || warn "curl or network not available" ;;
+            265) ip route 2>/dev/null || route -n 2>/dev/null ;;
+            0|q|Q) return ;;
+            *) warn "Invalid option: ${choice}" ;;
+        esac
+        pause
+    done
+}
+
+# =============================================================================
+# SECTION 11: SECURITY TOOLS (options 266-290)
+# =============================================================================
+menu_security_tools() {
+    while true; do
+        show_section_banner "Security Tools"
+        printf "${RED}${BOLD}  ⚠  Use only on systems you own or have explicit permission to test.${NC}\n\n"
+        printf "${BOLD}${WHITE}  BRUTE FORCE${NC}\n\n"
+        print_menu_item 266 "Hydra SSH brute force"
+        print_menu_item 267 "Hydra FTP brute force"
+        print_menu_item 268 "Hydra HTTP POST brute force"
+        print_menu_item 269 "John the Ripper (hash file)"
+        print_menu_item 270 "Hashcat (GPU hash cracking)"
+        printf "\n${BOLD}${WHITE}  WEB EXPLOITATION${NC}\n\n"
+        print_menu_item 271 "SQLMap SQL injection scan"
+        print_menu_item 272 "SQLMap database dump"
+        print_menu_item 273 "WPScan WordPress audit"
+        printf "\n${BOLD}${WHITE}  PASSWORD TOOLS${NC}\n\n"
+        print_menu_item 274 "Hash identifier"
+        print_menu_item 275 "Generate password hash (MD5)"
+        print_menu_item 276 "Generate password hash (SHA256)"
+        print_menu_item 277 "Generate password hash (bcrypt)"
+        print_menu_item 278 "Password generator"
+        print_menu_item 279 "Create custom wordlist"
+        printf "\n${BOLD}${WHITE}  SYSTEM SECURITY${NC}\n\n"
+        print_menu_item 280 "Firewall status (firewalld/iptables)"
+        print_menu_item 281 "SELinux / AppArmor status"
+        print_menu_item 282 "Audit log viewer (ausearch)"
+        print_menu_item 283 "File permission checker"
+        print_menu_item 284 "SUID / SGID file finder"
+        print_menu_item 285 "World-writable files"
+        print_menu_item 286 "Open ports vs firewall audit"
+        print_menu_item 287 "Run SecurityAgent scan"
+        print_menu_item 288 "Check for rootkits (rkhunter)"
+        print_menu_item 289 "ClamAV malware scan"
+        print_menu_item 290 "SSH configuration audit"
+        printf "\n"
+        print_menu_item   0 "Back to main menu"
+        printf "\n"
+        divider
+        printf "${YELLOW}Select option:${NC} "
+        read -r choice
+        case "${choice}" in
+            266) prompt_input "Target IP" tgt; prompt_input "Username" usr; prompt_input "Wordlist path" wlist
+                 hydra -l "${usr}" -P "${wlist}" ssh://"${tgt}" 2>/dev/null || warn "hydra not installed" ;;
+            267) prompt_input "Target IP" tgt; prompt_input "Username" usr; prompt_input "Wordlist path" wlist
+                 hydra -l "${usr}" -P "${wlist}" ftp://"${tgt}" 2>/dev/null || warn "hydra not installed" ;;
+            268) prompt_input "Target URL" url; prompt_input "POST data (e.g. user=^USER^&pass=^PASS^)" pdata
+                 prompt_input "Username" usr; prompt_input "Wordlist" wlist; prompt_input "Fail string" fail
+                 hydra -l "${usr}" -P "${wlist}" "${url}" http-post-form "${pdata}:${fail}" 2>/dev/null || warn "hydra not installed" ;;
+            269) prompt_input "Hash file path" hfile
+                 john "${hfile}" 2>/dev/null || warn "john not installed" ;;
+            270) prompt_input "Hash file path" hfile; prompt_input "Hash type (e.g. 0=MD5)" htype
+                 hashcat -m "${htype}" "${hfile}" 2>/dev/null || warn "hashcat not installed" ;;
+            271) prompt_input "Target URL" url
+                 sqlmap -u "${url}" --batch 2>/dev/null || warn "sqlmap not installed" ;;
+            272) prompt_input "Target URL" url
+                 sqlmap -u "${url}" --dump --batch 2>/dev/null || warn "sqlmap not installed" ;;
+            273) prompt_input "Target WordPress URL" url
+                 wpscan --url "${url}" 2>/dev/null || warn "wpscan not installed" ;;
+            274) prompt_input "Hash to identify" hsh
+                 python3 -c "
+import sys
+h = '${hsh}'
+l = len(h)
+if l == 32: print('Possible: MD5')
+elif l == 40: print('Possible: SHA1')
+elif l == 56: print('Possible: SHA224')
+elif l == 64: print('Possible: SHA256')
+elif l == 96: print('Possible: SHA384')
+elif l == 128: print('Possible: SHA512')
+elif h.startswith('\$2'): print('Possible: bcrypt')
+else: print('Unknown hash type (length:', l, ')')
+" 2>/dev/null ;;
+            275) prompt_input "Enter text to hash" txt
+                 printf '%s' "${txt}" | md5sum ;;
+            276) prompt_input "Enter text to hash" txt
+                 printf '%s' "${txt}" | sha256sum ;;
+            277) prompt_input "Enter text to hash" txt
+                 python3 -c "import bcrypt; print(bcrypt.hashpw(b'${txt}', bcrypt.gensalt()).decode())" 2>/dev/null \
+                     || warn "bcrypt Python module not installed" ;;
+            278) prompt_input "Password length (default 20)" pwlen
+                 [[ -z "${pwlen}" ]] && pwlen=20
+                 python3 -c "
+import secrets, string
+chars = string.ascii_letters + string.digits + string.punctuation
+print(secrets.SystemRandom().choices(chars, k=int('${pwlen}'))[::-1])
+import sys
+pw = ''.join(secrets.choice(chars) for _ in range(int('${pwlen}')))
+print(pw)
+" 2>/dev/null ;;
+            279) prompt_input "Base word" bword; prompt_input "Output file" outf
+                 python3 -c "
+base = '${bword}'
+with open('${outf}', 'w') as f:
+    for i in range(1000):
+        f.write(base + str(i) + '\n')
+    for sfx in ['!','@','#','\$','%','123','1234','!@#']:
+        f.write(base + sfx + '\n')
+        f.write(base.capitalize() + sfx + '\n')
+print('Wordlist saved to ${outf}')
+" 2>/dev/null ;;
+            280) firewall-cmd --list-all 2>/dev/null || iptables -L -n 2>/dev/null || ufw status 2>/dev/null \
+                     || warn "No firewall tool found" ;;
+            281) sestatus 2>/dev/null || aa-status 2>/dev/null || warn "Neither SELinux nor AppArmor found" ;;
+            282) ausearch -m avc -ts recent 2>/dev/null || tail -n 50 /var/log/audit/audit.log 2>/dev/null \
+                     || tail -n 50 /var/log/auth.log 2>/dev/null || warn "No audit log found" ;;
+            283) prompt_input "File or directory path" fpath
+                 find "${fpath}" -type f \( -perm -002 -o -perm -020 \) -ls 2>/dev/null | head -30 \
+                     || ls -la "${fpath}" ;;
+            284) find / -type f \( -perm -4000 -o -perm -2000 \) -ls 2>/dev/null | head -30 ;;
+            285) find / -type f -perm -002 -not -path "/proc/*" -not -path "/sys/*" 2>/dev/null | head -30 ;;
+            286) ss -tulpn 2>/dev/null; printf "\n${BOLD}Firewall rules:${NC}\n"
+                 firewall-cmd --list-ports 2>/dev/null || iptables -L INPUT -n 2>/dev/null ;;
+            287) prompt_input "Target path or URL" tgt
+                 run_python "agents/security_agent.py" "--full-scan" "${tgt}" ;;
+            288) rkhunter --check --sk 2>/dev/null || warn "rkhunter not installed" ;;
+            289) prompt_input "Path to scan" spath
+                 clamscan -r "${spath}" 2>/dev/null || warn "clamav not installed" ;;
+            290) sshd -T 2>/dev/null | grep -E "^(permit|password|pubkey|root|max)" \
+                     || grep -E "^(PermitRoot|PasswordAuth|PubkeyAuth|MaxAuthTries)" /etc/ssh/sshd_config 2>/dev/null \
+                     || warn "Cannot read sshd config" ;;
+            0|q|Q) return ;;
+            *) warn "Invalid option: ${choice}" ;;
+        esac
+        pause
+    done
+}
+
+# =============================================================================
+# SECTION 12: BACKUP / RESTORE (options 291-300)
+# =============================================================================
+menu_backup_restore() {
+    while true; do
+        show_section_banner "Backup & Restore"
+        print_menu_item 291 "Backup everything"
+        print_menu_item 292 "Backup config only"
+        print_menu_item 293 "Backup models list"
+        print_menu_item 294 "Restore from backup"
+        print_menu_item 295 "List available backups"
+        print_menu_item 296 "Delete old backups"
+        print_menu_item 297 "Backup agents data"
+        print_menu_item 298 "Backup vector memory"
+        print_menu_item 299 "Verify backup integrity"
+        print_menu_item 300 "Scheduled backup status"
+        printf "\n"
+        print_menu_item   0 "Back to main menu"
+        printf "\n"
+        divider
+        printf "${YELLOW}Select option:${NC} "
+        read -r choice
+        case "${choice}" in
+            291) bash "${BASE_DIR}/scripts/backup.sh" "--all" 2>/dev/null \
+                     || { bkdir="/opt/melvin-backups/$(date +%Y%m%d_%H%M%S)"
+                          mkdir -p "${bkdir}"
+                          cp -r "${BASE_DIR}/configs" "${bkdir}/"
+                          success "Backup created at ${bkdir}"; } ;;
+            292) bkdir="/opt/melvin-backups/config_$(date +%Y%m%d_%H%M%S)"
+                 mkdir -p "${bkdir}"
+                 cp -r "${BASE_DIR}/configs" "${bkdir}/"
+                 success "Config backup created at ${bkdir}" ;;
+            293) bkfile="/opt/melvin-backups/models_$(date +%Y%m%d_%H%M%S).txt"
+                 mkdir -p /opt/melvin-backups
+                 curl -s "http://${OLLAMA_HOST}:${OLLAMA_PORT}/api/tags" \
+                     | python3 -c "import sys,json; [print(m['name']) for m in json.load(sys.stdin).get('models',[])]" \
+                     > "${bkfile}" 2>/dev/null
+                 success "Models list saved to ${bkfile}" ;;
+            294) prompt_input "Backup path to restore from" bkpath
+                 [[ -d "${bkpath}" ]] || { error "Backup path not found"; pause; continue; }
+                 printf "${RED}Restore from ${bkpath}? This may overwrite current config. (yes/no):${NC} "
+                 read -r conf
+                 [[ "${conf}" == "yes" ]] && bash "${BASE_DIR}/scripts/backup.sh" "--restore" "${bkpath}" 2>/dev/null \
+                     || cp -r "${bkpath}/configs/"* "${BASE_DIR}/configs/" 2>/dev/null \
+                     && success "Restored config from ${bkpath}" ;;
+            295) ls -lht /opt/melvin-backups/ 2>/dev/null || warn "No backup directory found" ;;
+            296) prompt_input "Delete backups older than N days" days
+                 find /opt/melvin-backups -maxdepth 1 -mtime +"${days}" -exec rm -rf {} \; 2>/dev/null
+                 success "Old backups deleted" ;;
+            297) bkdir="/opt/melvin-backups/agents_$(date +%Y%m%d_%H%M%S)"
+                 mkdir -p "${bkdir}"
+                 cp -r "${BASE_DIR}/agents" "${bkdir}/" 2>/dev/null
+                 success "Agents backup created at ${bkdir}" ;;
+            298) bkdir="/opt/melvin-backups/memory_$(date +%Y%m%d_%H%M%S)"
+                 mkdir -p "${bkdir}"
+                 cp -r "${BASE_DIR}/memory" "${bkdir}/" 2>/dev/null
+                 success "Memory backup created at ${bkdir}" ;;
+            299) prompt_input "Backup path to verify" bkpath
+                 if [[ -d "${bkpath}" ]]; then
+                     find "${bkpath}" -type f -exec md5sum {} \; 2>/dev/null
+                     success "Integrity check complete"
+                 else
+                     error "Backup path not found"
+                 fi ;;
+            300) crontab -l 2>/dev/null | grep -i "backup\|melvin" || info "No scheduled backup cron found" ;;
+            0|q|Q) return ;;
+            *) warn "Invalid option: ${choice}" ;;
+        esac
+        pause
+    done
+}
+
+# =============================================================================
+# SECTION 13: SETTINGS (options 301-315)
+# =============================================================================
+menu_settings() {
+    while true; do
+        show_section_banner "Settings"
+        print_menu_item 301 "Edit config (settings.yaml)"
+        print_menu_item 302 "View config"
+        print_menu_item 303 "Reset config to defaults"
+        print_menu_item 304 "Change default model"
+        print_menu_item 305 "Set Ollama host"
+        print_menu_item 306 "Set Ollama port"
+        print_menu_item 307 "Configure cluster settings"
+        print_menu_item 308 "System update (dnf/apt)"
+        print_menu_item 309 "View Melvin logs"
+        print_menu_item 310 "Clear all logs"
+        print_menu_item 311 "Reinstall Python dependencies"
+        print_menu_item 312 "Check Melvin installation"
+        print_menu_item 313 "Show current config summary"
+        print_menu_item 314 "Enable/disable debug mode"
+        print_menu_item 315 "About Melvin God Mode"
+        printf "\n"
+        print_menu_item   0 "Back to main menu"
+        printf "\n"
+        divider
+        printf "${YELLOW}Select option:${NC} "
+        read -r choice
+        case "${choice}" in
+            301) "${EDITOR:-nano}" "${BASE_DIR}/configs/settings.yaml" 2>/dev/null \
+                     || vi "${BASE_DIR}/configs/settings.yaml" 2>/dev/null \
+                     || warn "No editor available. Set \$EDITOR variable." ;;
+            302) cat "${BASE_DIR}/configs/settings.yaml" 2>/dev/null || warn "Config file not found" ;;
+            303) printf "${RED}Reset config to defaults? (yes/no):${NC} "; read -r conf
+                 [[ "${conf}" == "yes" ]] && bash "${BASE_DIR}/installer/install.sh" "--config-only" 2>/dev/null \
+                     || warn "Manual reset required" ;;
+            304) prompt_input "New default model" mdl
+                 sed -i "s/default_model:.*/default_model: \"${mdl}\"/" "${BASE_DIR}/configs/settings.yaml" 2>/dev/null
+                 success "Default model set to ${mdl}" ;;
+            305) prompt_input "New Ollama host" newhost
+                 sed -i "s/host: \"[^\"]*\"/host: \"${newhost}\"/" "${BASE_DIR}/configs/settings.yaml" 2>/dev/null
+                 OLLAMA_HOST="${newhost}"
+                 success "Ollama host set to ${newhost}" ;;
+            306) prompt_input "New Ollama port" newport
+                 sed -i "s/port: [0-9]*/port: ${newport}/" "${BASE_DIR}/configs/settings.yaml" 2>/dev/null
+                 OLLAMA_PORT="${newport}"
+                 success "Ollama port set to ${newport}" ;;
+            307) "${EDITOR:-nano}" "${BASE_DIR}/configs/cluster.yaml" 2>/dev/null \
+                     || warn "Cluster config not found" ;;
+            308) if command -v dnf &>/dev/null; then
+                     dnf update -y
+                 elif command -v apt &>/dev/null; then
+                     apt-get update && apt-get upgrade -y
+                 elif command -v yum &>/dev/null; then
+                     yum update -y
+                 else
+                     warn "No package manager found"
+                 fi ;;
+            309) ls "${LOG_DIR}"/*.log 2>/dev/null | while read -r lf; do
+                     printf "\n${CYAN}=== %s ===${NC}\n" "${lf}"
+                     tail -n 20 "${lf}"
+                 done ;;
+            310) printf "${RED}Clear all Melvin logs? (yes/no):${NC} "; read -r conf
+                 [[ "${conf}" == "yes" ]] && \
+                     find "${LOG_DIR}" -name "*.log" -exec truncate -s 0 {} \; && success "All logs cleared" ;;
+            311) if [[ -f "${BASE_DIR}/requirements.txt" ]]; then
+                     "${VENV_PYTHON}" -m pip install -r "${BASE_DIR}/requirements.txt" --upgrade
+                 else
+                     warn "requirements.txt not found at ${BASE_DIR}/"
+                 fi ;;
+            312) printf "${BOLD}Checking Melvin installation...${NC}\n"
+                 [[ -d "${BASE_DIR}" ]] && success "BASE_DIR exists" || error "BASE_DIR missing"
+                 [[ -x "${VENV_PYTHON}" ]] && success "Python venv OK" || warn "Python venv not found"
+                 curl -s "http://${OLLAMA_HOST}:${OLLAMA_PORT}/api/tags" &>/dev/null \
+                     && success "Ollama is reachable" || warn "Ollama is NOT reachable"
+                 for svc in melvin-webui melvin-cluster melvin-healer; do
+                     check_service "${svc}" 2>/dev/null || true
+                 done ;;
+            313) printf "\n${BOLD}Config Summary:${NC}\n"
+                 printf "  Base Dir:     %s\n" "${BASE_DIR}"
+                 printf "  Venv Python:  %s\n" "${VENV_PYTHON}"
+                 printf "  Ollama:       %s:%s\n" "${OLLAMA_HOST}" "${OLLAMA_PORT}"
+                 printf "  Web UI Port:  %s\n" "${WEBUI_PORT}"
+                 printf "  Log Dir:      %s\n" "${LOG_DIR}"
+                 [[ -f "${BASE_DIR}/configs/settings.yaml" ]] && \
+                     grep -E "^\s*(name|version|default_model):" "${BASE_DIR}/configs/settings.yaml" 2>/dev/null ;;
+            314) prompt_input "Enable debug mode? (true/false)" dbg
+                 sed -i "s/debug:.*/debug: ${dbg}/" "${BASE_DIR}/configs/settings.yaml" 2>/dev/null
+                 success "Debug mode set to ${dbg}" ;;
+            315) clear; show_banner
+                 printf "\n${BOLD}Melvin God Mode${NC} — AI Infrastructure Platform\n"
+                 printf "Version: 1.0.0\n"
+                 printf "Base Directory: %s\n" "${BASE_DIR}"
+                 printf "GitHub: https://github.com/melvin-god-mode\n"
+                 printf "\nBuilt with: Ollama, Python, Flask, ChromaDB, faster-whisper\n" ;;
+            0|q|Q) return ;;
+            *) warn "Invalid option: ${choice}" ;;
+        esac
+        pause
+    done
+}
+
+# =============================================================================
+# MAIN MENU
+# =============================================================================
+main_menu() {
+    while true; do
+        show_banner
+        printf "\n${BOLD}${WHITE}  MAIN MENU — SELECT A SECTION${NC}\n\n"
+        print_menu_item  1  "AI Tools          (Chat with AI models, stream, multi-turn)"
+        print_menu_item  2  "Agent Control     (CoderAgent, ResearchAgent, Swarm…)"
+        print_menu_item  3  "Model Manager     (List, pull, delete, update models)"
+        print_menu_item  4  "Auto-Code         (Generate, improve, test, document code)"
+        print_menu_item  5  "Cluster Control   (Nodes, GPU scheduler, replication)"
+        print_menu_item  6  "Web UI            (Start/stop, configure, open browser)"
+        print_menu_item  7  "Voice AI          (Voice Jarvis, TTS, microphone)"
+        print_menu_item  8  "System Monitoring (CPU, GPU, disk, containers)"
+        print_menu_item  9  "Healing           (Auto-healer, reports, config)"
+        print_menu_item 10  "Networking Tools  (Nmap, Nikto, Gobuster, DNS, OSINT)"
+        print_menu_item 11  "Security Tools    (Hydra, SQLMap, WPScan, audits)"
+        print_menu_item 12  "Backup / Restore  (Backup, restore, list, verify)"
+        print_menu_item 13  "Settings          (Config, update, logs, about)"
+        printf "\n"
+        print_menu_item  0  "Quit"
+        printf "\n"
+        divider
+        printf "${YELLOW}Select section:${NC} "
+        read -r choice
+        case "${choice}" in
+            1)  menu_ai_tools ;;
+            2)  menu_agent_control ;;
+            3)  menu_model_manager ;;
+            4)  menu_autocode ;;
+            5)  menu_cluster_control ;;
+            6)  menu_webui ;;
+            7)  menu_voice_ai ;;
+            8)  menu_system_monitoring ;;
+            9)  menu_healing ;;
+            10) menu_networking_tools ;;
+            11) menu_security_tools ;;
+            12) menu_backup_restore ;;
+            13) menu_settings ;;
+            0|q|Q|quit|exit)
+                clear
+                printf "${MAGENTA}${BOLD}  Goodbye from Melvin God Mode.${NC}\n\n"
+                exit 0 ;;
+            *) warn "Invalid section: ${choice}" ; sleep 1 ;;
+        esac
+    done
+}
+
+# =============================================================================
+# ENTRY POINT — handle CLI arguments or drop into interactive menu
+# =============================================================================
+case "${1:-}" in
+    --help|-h)
+        printf "Usage: melvin [OPTION]\n"
+        printf "  (no args)       Interactive menu\n"
+        printf "  --chat MODEL    Quick chat with a model\n"
+        printf "  --status        Show service status\n"
+        printf "  --version       Show version\n"
+        printf "  --help          Show this help\n"
+        exit 0 ;;
+    --chat)
+        model="${2:-llama3}"
+        printf "${CYAN}Chatting with %s. Type 'exit' to quit.${NC}\n" "${model}"
+        while true; do
+            printf "${YELLOW}You:${NC} "; read -r msg
+            [[ "${msg}" == "exit" ]] && break
+            ollama_chat "${model}" "${msg}"
+        done
+        exit 0 ;;
+    --status)
+        printf "${BOLD}Melvin God Mode — Service Status${NC}\n"
+        divider
+        for svc in ollama melvin-webui melvin-cluster melvin-healer; do
+            check_service "${svc}" 2>/dev/null || true
+        done
+        exit 0 ;;
+    --version)
+        printf "Melvin God Mode v1.0.0\n"
+        exit 0 ;;
+    "")
+        main_menu ;;
+    *)
+        error "Unknown option: ${1}"
+        printf "Run 'melvin --help' for usage.\n"
+        exit 1 ;;
+esac
