@@ -1,0 +1,124 @@
+# =============================================================================
+#  Melvin God Mode — Runtime Configuration
+#  /opt/melvin/configs/settings.yaml
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# System
+# ---------------------------------------------------------------------------
+system:
+  name: "Melvin God Mode"
+  version: "1.0.0"
+  base_dir: "/opt/melvin"
+  log_dir: "/var/log/melvin"
+  data_dir: "/opt/melvin/data"
+
+# ---------------------------------------------------------------------------
+# Ollama LLM backend
+# ---------------------------------------------------------------------------
+ollama:
+  host: "127.0.0.1"
+  port: 11434
+  timeout: 120          # seconds before a request is abandoned
+  max_retries: 3
+
+# ---------------------------------------------------------------------------
+# Web UI  (Flask / Flask-SocketIO)
+# ---------------------------------------------------------------------------
+webui:
+  host: "0.0.0.0"
+  port: 5000
+  debug: false
+  # REQUIRED: Replace with a long random string before going to production.
+  # Generate one with: python3 -c "import secrets; print(secrets.token_hex(32))"
+  # The application will log a warning on start-up if this default is detected.
+  secret_key: "CHANGE_ME_IN_PRODUCTION"
+
+# ---------------------------------------------------------------------------
+# Vector / Persistent database
+# ---------------------------------------------------------------------------
+database:
+  type: "chromadb"
+  path: "/opt/melvin/data/chromadb"
+  collection_name: "melvin_memory"
+
+# ---------------------------------------------------------------------------
+# Agent orchestration
+# ---------------------------------------------------------------------------
+agents:
+  max_concurrent: 4
+  timeout: 300            # seconds per agent task
+  retry_attempts: 3
+  log_level: "INFO"       # DEBUG | INFO | WARNING | ERROR | CRITICAL
+
+# ---------------------------------------------------------------------------
+# Cluster / multi-node
+# ---------------------------------------------------------------------------
+cluster:
+  # Replace placeholder addresses with the actual IPs / hostnames of each node.
+  nodes:
+    - name: "node-1"
+      host: "192.168.1.10"   # replace with real node IP
+      port: 7001
+    - name: "node-2"
+      host: "192.168.1.11"   # replace with real node IP
+      port: 7001
+    - name: "node-3"
+      host: "192.168.1.12"   # replace with real node IP
+      port: 7001
+  sync_interval: 30       # seconds between cluster state synchronisation
+
+# ---------------------------------------------------------------------------
+# GPU scheduling
+# ---------------------------------------------------------------------------
+gpu:
+  scheduler_interval: 10  # seconds between scheduling ticks
+  max_jobs_per_gpu: 2
+  memory_threshold: 0.85  # fraction of VRAM; jobs queued above this
+
+# ---------------------------------------------------------------------------
+# Voice interface
+# ---------------------------------------------------------------------------
+voice:
+  enabled: false
+  language: "en-US"
+  sample_rate: 16000      # Hz
+  chunk_size: 1024        # frames per buffer read
+
+# ---------------------------------------------------------------------------
+# Self-healing / container watchdog
+# ---------------------------------------------------------------------------
+healing:
+  check_interval: 60      # seconds between health checks
+  restart_attempts: 3
+  notification_webhook: ""  # POST JSON alerts here (Slack / Teams / etc.)
+
+# ---------------------------------------------------------------------------
+# Security
+# ---------------------------------------------------------------------------
+security:
+  # Set api_key_required: true and populate api_keys before exposing to a
+  # network.  The webui binds to 0.0.0.0 by default; leaving auth disabled
+  # is only safe for isolated/local development environments.
+  api_key_required: false
+  rate_limit: 100         # requests per minute per IP
+  allowed_hosts:
+    - "localhost"
+    - "127.0.0.1"
+
+# ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
+models:
+  default_model: "llama3"
+  embedding_model: "nomic-embed-text"
+  max_context_length: 8192
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging:
+  level: "INFO"
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+  max_size_mb: 100
+  backup_count: 5
