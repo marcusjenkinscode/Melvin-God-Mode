@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Melvin God Mode{% endblock %}</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🤖</text></svg>" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+  {% block extra_css %}{% endblock %}
+</head>
+<body>
+
+<!-- ── Navigation ───────────────────────────────────────── -->
+<nav class="navbar">
+  <a class="navbar-brand" href="/">MELVIN <span>//</span> GOD MODE</a>
+  <ul class="navbar-nav">
+    <li><a href="/"         class="{% if page == 'home'      %}active{% endif %}">Home</a></li>
+    <li><a href="/chat"     class="{% if page == 'chat'      %}active{% endif %}">Chat</a></li>
+    <li><a href="/dashboard"class="{% if page == 'dashboard' %}active{% endif %}">Dashboard</a></li>
+    <li><a href="/models"   class="{% if page == 'models'    %}active{% endif %}">Models</a></li>
+    <li><a href="/agents"   class="{% if page == 'agents'    %}active{% endif %}">Agents</a></li>
+    <li><a href="/cluster"  class="{% if page == 'cluster'   %}active{% endif %}">Cluster</a></li>
+  </ul>
+  <div class="navbar-status">
+    <span class="status-dot" id="ollama-dot"></span>
+    <span id="ollama-status">Checking…</span>
+  </div>
+</nav>
+
+<!-- ── Main content ─────────────────────────────────────── -->
+{% block content %}{% endblock %}
+
+<!-- ── Toast container ──────────────────────────────────── -->
+<div id="toast-container"></div>
+
+<!-- ── Shared scripts ───────────────────────────────────── -->
+<script>
+  // Shared toast helper
+  function showToast(msg, type = "info") {
+    let c = document.getElementById("toast-container");
+    const icons = { success: "✓", error: "✗", info: "ℹ", warn: "⚠" };
+    const t = document.createElement("div");
+    t.className = `toast ${type}`;
+    t.innerHTML = `<span class="toast-icon">${icons[type]||"ℹ"}</span><span class="toast-msg">${msg}</span><button class="toast-close" onclick="this.parentElement.remove()">×</button>`;
+    c.appendChild(t);
+    setTimeout(() => t.remove && t.remove(), 5000);
+  }
+
+  // Check Ollama connectivity
+  (function checkOllama() {
+    const dot  = document.getElementById("ollama-dot");
+    const span = document.getElementById("ollama-status");
+    fetch("/api/models")
+      .then(r => {
+        if (dot)  dot.className = r.ok ? "status-dot" : "status-dot offline";
+        if (span) span.textContent = r.ok ? "Ollama Online" : "Ollama Offline";
+      })
+      .catch(() => {
+        if (dot)  dot.className = "status-dot offline";
+        if (span) span.textContent = "Ollama Offline";
+      });
+  })();
+</script>
+
+{% block extra_js %}{% endblock %}
+</body>
+</html>

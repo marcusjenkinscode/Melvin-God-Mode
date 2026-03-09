@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}Melvin God Mode — Dashboard{% endblock %}
+
+{% block content %}
+<div class="container">
+
+  <div class="page-header flex justify-between items-center">
+    <div>
+      <h2>📊 System Dashboard</h2>
+      <p>Live metrics — auto-refreshes every 5 s</p>
+    </div>
+    <button class="btn btn-sm" onclick="updateDashboard()">⟳ Refresh</button>
+  </div>
+
+  <!-- ── Top stat cards ─────────────────────────────────── -->
+  <div class="dashboard-grid">
+    <div class="stat-card">
+      <div class="stat-label">CPU Usage</div>
+      <div class="stat-value" id="cpu-pct">–</div>
+      <div class="progress mt-sm"><div class="progress-bar" id="cpu-bar" style="width:0%"></div></div>
+      <div class="stat-sub mt-sm" id="cpu-cores"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Memory Used</div>
+      <div class="stat-value" id="mem-used">–</div>
+      <div class="progress mt-sm"><div class="progress-bar blue" id="mem-bar" style="width:0%"></div></div>
+      <div class="stat-sub mt-sm" id="mem-pct"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Disk Usage</div>
+      <div class="stat-value" id="disk-pct">–</div>
+      <div class="progress mt-sm"><div class="progress-bar yellow" id="disk-bar" style="width:0%"></div></div>
+      <div class="stat-sub mt-sm" id="disk-free"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Network I/O</div>
+      <div class="stat-value" style="font-size:1.2rem" id="net-recv">–</div>
+      <div class="stat-sub">↓ recv &nbsp;·&nbsp; <span id="net-sent">–</span> ↑ sent</div>
+    </div>
+  </div>
+
+  <!-- ── Charts ─────────────────────────────────────────── -->
+  <div class="charts-grid">
+    <div class="card">
+      <div class="card-header"><h3>CPU History</h3></div>
+      <div class="chart-container"><canvas id="cpu-chart"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>Memory Breakdown</h3></div>
+      <div class="chart-container"><canvas id="mem-chart"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>GPU Utilisation</h3>
+        <span id="no-gpu-msg" class="badge badge-grey" style="display:none">No GPU</span>
+      </div>
+      <div class="chart-container"><canvas id="gpu-chart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- ── GPU table ──────────────────────────────────────── -->
+  <div class="card mb-lg">
+    <div class="card-header"><h3>GPU Devices</h3></div>
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>Name</th><th>GPU %</th><th>VRAM</th><th>Temp</th><th>Power</th>
+          </tr>
+        </thead>
+        <tbody id="gpu-table-body">
+          <tr><td colspan="6" class="text-muted text-center">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <!-- ── Agents table ──────────────────────────────────── -->
+    <div class="card">
+      <div class="card-header">
+        <h3>Active Agents</h3>
+        <a href="/agents" class="btn btn-sm btn-secondary">View All</a>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>ID</th><th>Name</th><th>Status</th><th>Last Task</th></tr></thead>
+          <tbody id="agents-table-body">
+            <tr><td colspan="4" class="text-muted text-center">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Cluster table ─────────────────────────────────── -->
+    <div class="card">
+      <div class="card-header">
+        <h3>Cluster Nodes <span class="badge badge-blue ml-sm" id="cluster-count">–</span></h3>
+        <a href="/cluster" class="btn btn-sm btn-secondary">View All</a>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>Node</th><th>Host</th><th>Role</th><th>Status</th><th>CPU</th><th>Memory</th></tr></thead>
+          <tbody id="cluster-table-body">
+            <tr><td colspan="6" class="text-muted text-center">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Logs ───────────────────────────────────────────── -->
+  <div class="logs-panel mt-lg">
+    <div class="logs-header">
+      <span>System Log</span>
+      <button class="btn btn-sm" onclick="document.getElementById('logs-body').innerHTML=''">Clear</button>
+    </div>
+    <div class="logs-body" id="logs-body"></div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Melvin God Mode — Chat{% endblock %}
+
+{% block extra_css %}
+<style>
+  /* Override body overflow so chat layout can fill viewport */
+  body { overflow: hidden; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="chat-layout">
+
+  <!-- Chat header with model selector -->
+  <div class="chat-header">
+    <div class="flex items-center gap-sm">
+      <span class="text-accent text-upper text-sm" style="letter-spacing:.1em">⚡ Chat</span>
+      <span class="text-muted text-xs">— streaming via WebSocket</span>
+    </div>
+    <div class="flex items-center gap-md">
+      <label for="model-select" class="text-dim text-xs text-upper">Model:</label>
+      <select id="model-select" style="width:220px">
+        <option value="llama3">llama3</option>
+      </select>
+      <button class="btn btn-sm" id="clear-btn" title="Clear conversation">✕ Clear</button>
+    </div>
+    <div class="flex items-center gap-sm">
+      <span class="status-dot" id="socket-status"></span>
+      <span class="text-xs text-dim" id="socket-status-text">Connecting…</span>
+    </div>
+  </div>
+
+  <!-- Messages area -->
+  <div class="chat-messages" id="chat-messages">
+    <div class="chat-empty" id="chat-empty">
+      <pre class="ascii-logo" style="color:var(--accent-dim);opacity:.5;font-size:.65rem;line-height:1.3">
+  ███╗   ███╗███████╗██╗    ██╗   ██╗██╗███╗
+  ████╗ ████║██╔════╝██║    ██║   ██║██║████╗
+  ██╔████╔██║█████╗  ██║    ██║   ██║██║██╔██╗
+  ██║╚██╔╝██║██╔══╝  ██║    ╚██╗ ██╔╝██║██║╚██╗
+  ██║ ╚═╝ ██║███████╗███████╗╚████╔╝ ██║██║ ╚██╗
+  ╚═╝     ╚═╝╚══════╝╚══════╝ ╚═══╝  ╚═╝╚═╝  ╚═╝</pre>
+      <p class="text-dim" style="font-size:.9rem">Select a model and start typing. Responses stream in real time.</p>
+      <p class="text-muted text-xs">Press <kbd style="background:var(--bg-input);border:1px solid var(--border);padding:1px 6px;border-radius:3px">Enter</kbd> to send &nbsp;·&nbsp; <kbd style="background:var(--bg-input);border:1px solid var(--border);padding:1px 6px;border-radius:3px">Shift+Enter</kbd> for newline</p>
+    </div>
+  </div>
+
+  <!-- Input area -->
+  <div class="chat-input-area">
+    <div class="chat-input-row">
+      <textarea
+        id="chat-input"
+        placeholder="Send a message…"
+        rows="1"
+        autocomplete="off"
+        spellcheck="true"
+      ></textarea>
+      <button class="btn btn-primary" id="send-btn" title="Send (Enter)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+        </svg>
+      </button>
+    </div>
+    <div class="chat-input-hint">
+      <span id="char-counter" class="text-muted"></span>
+      &nbsp;· History stored in session &nbsp;·&nbsp; Powered by Ollama
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"
+        integrity="sha384-2huIO7aB2gCLpjBCWUDaJzHBnQ9M5J7JyEV5HEVsUnBBFnTI8G5FqHl1t9oW4yJ"
+        crossorigin="anonymous"></script>
+<script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+{% endblock %}

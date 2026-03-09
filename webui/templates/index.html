@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Melvin God Mode — Home{% endblock %}
+
+{% block content %}
+<div class="container">
+
+  <!-- Hero -->
+  <section class="hero">
+    <pre class="hero-ascii">
+ ███╗   ███╗███████╗██╗    ██╗   ██╗██╗███╗   ██╗
+ ████╗ ████║██╔════╝██║    ██║   ██║██║████╗  ██║
+ ██╔████╔██║█████╗  ██║    ██║   ██║██║██╔██╗ ██║
+ ██║╚██╔╝██║██╔══╝  ██║    ╚██╗ ██╔╝██║██║╚██╗██║
+ ██║ ╚═╝ ██║███████╗███████╗╚████╔╝ ██║██║ ╚████║
+ ╚═╝     ╚═╝╚══════╝╚══════╝ ╚═══╝  ╚═╝╚═╝  ╚═══╝
+              G O D   M O D E   //   v1.0.0</pre>
+
+    <p class="hero-subtitle">
+      Autonomous AI infrastructure platform — local LLMs, multi-agent orchestration,
+      real-time cluster management, all in one dark terminal.
+    </p>
+    <div class="hero-actions">
+      <a class="btn btn-primary btn-lg" href="/chat">⚡ Launch Chat</a>
+      <a class="btn btn-lg" href="/dashboard">📊 Dashboard</a>
+      <a class="btn btn-secondary btn-lg" href="/models">🧠 Models</a>
+    </div>
+  </section>
+
+  <!-- Feature grid -->
+  <div class="features-grid">
+    <a class="feature-item" href="/chat" style="text-decoration:none">
+      <div class="feature-icon">💬</div>
+      <div class="feature-title">AI Chat</div>
+      <div class="feature-desc">Streaming chat with any local Ollama model via WebSocket</div>
+    </a>
+    <a class="feature-item" href="/dashboard" style="text-decoration:none">
+      <div class="feature-icon">📊</div>
+      <div class="feature-title">Dashboard</div>
+      <div class="feature-desc">Live CPU, memory, GPU, and agent monitoring</div>
+    </a>
+    <a class="feature-item" href="/models" style="text-decoration:none">
+      <div class="feature-icon">🧠</div>
+      <div class="feature-title">Models</div>
+      <div class="feature-desc">Pull, manage, and inspect your local LLM library</div>
+    </a>
+    <a class="feature-item" href="/agents" style="text-decoration:none">
+      <div class="feature-icon">🤖</div>
+      <div class="feature-title">Agents</div>
+      <div class="feature-desc">Planner, Coder, Debugger, DevOps, Research, Security</div>
+    </a>
+    <a class="feature-item" href="/cluster" style="text-decoration:none">
+      <div class="feature-icon">🖧</div>
+      <div class="feature-title">Cluster</div>
+      <div class="feature-desc">Multi-node status, workload distribution, and health</div>
+    </a>
+    <div class="feature-item">
+      <div class="feature-icon">🔒</div>
+      <div class="feature-title">100% Local</div>
+      <div class="feature-desc">No cloud calls. All inference runs on your hardware.</div>
+    </div>
+  </div>
+
+  <!-- Quick stats bar -->
+  <div class="grid-4 mt-lg" id="quick-stats">
+    <div class="stat-card">
+      <div class="stat-label">CPU Usage</div>
+      <div class="stat-value" id="qs-cpu">–</div>
+      <div class="progress mt-sm"><div class="progress-bar" id="qs-cpu-bar" style="width:0%"></div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Memory</div>
+      <div class="stat-value" id="qs-mem">–</div>
+      <div class="stat-sub" id="qs-mem-sub"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Models Available</div>
+      <div class="stat-value" id="qs-models">–</div>
+      <div class="stat-sub">local ollama library</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Active Agents</div>
+      <div class="stat-value" id="qs-agents">–</div>
+      <div class="stat-sub">ready to execute</div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    function setEl(id, v) { const e = document.getElementById(id); if (e) e.textContent = v; }
+
+    fetch("/api/system").then(r => r.json()).then(d => {
+      setEl("qs-cpu", (d.cpu?.percent ?? 0).toFixed(1) + "%");
+      setEl("qs-mem", (d.memory?.percent ?? 0).toFixed(1) + "%");
+      setEl("qs-mem-sub", `${(d.memory?.used_gb ?? 0).toFixed(1)} / ${(d.memory?.total_gb ?? 0).toFixed(1)} GB`);
+      const bar = document.getElementById("qs-cpu-bar");
+      if (bar) bar.style.width = (d.cpu?.percent ?? 0) + "%";
+    }).catch(() => {});
+
+    fetch("/api/models").then(r => r.json()).then(d => {
+      setEl("qs-models", (d.models || []).length);
+    }).catch(() => {});
+
+    fetch("/api/agents").then(r => r.json()).then(d => {
+      setEl("qs-agents", (d.agents || []).length);
+    }).catch(() => {});
+  })();
+</script>
+{% endblock %}

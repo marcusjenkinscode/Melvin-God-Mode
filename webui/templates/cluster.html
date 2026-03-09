@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Melvin God Mode — Cluster{% endblock %}
+
+{% block content %}
+<div class="container">
+
+  <div class="page-header flex justify-between items-center">
+    <div>
+      <h2>🖧 Cluster Management</h2>
+      <p>Node health, resource utilisation, and workload distribution</p>
+    </div>
+    <button class="btn" onclick="loadCluster()">⟳ Refresh</button>
+  </div>
+
+  <!-- ── Summary cards ────────────────────────────────── -->
+  <div class="grid-4 mb-lg">
+    <div class="stat-card">
+      <div class="stat-label">Total Nodes</div>
+      <div class="stat-value" id="cl-total">–</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Online</div>
+      <div class="stat-value text-accent" id="cl-online">–</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Avg CPU</div>
+      <div class="stat-value" id="cl-avg-cpu">–</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total RAM</div>
+      <div class="stat-value" id="cl-total-ram">–</div>
+    </div>
+  </div>
+
+  <!-- ── Nodes table ───────────────────────────────────── -->
+  <div class="card mb-lg">
+    <div class="card-header"><h3>Nodes</h3></div>
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>Node</th><th>Host</th><th>Role</th><th>Status</th>
+            <th>CPU %</th><th>Memory</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="nodes-body">
+          <tr><td colspan="7" class="text-muted text-center"><span class="spinner"></span> Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Add remote node ──────────────────────────────── -->
+  <div class="card">
+    <div class="card-header"><h3>Add Remote Node</h3></div>
+    <p class="text-dim text-sm mb-md">
+      Define additional cluster nodes via the <code>MELVIN_CLUSTER_NODES</code> environment
+      variable (comma-separated hostnames/IPs) and restart the server.
+    </p>
+    <div class="flex gap-md items-end" style="flex-wrap:wrap">
+      <div class="form-group flex-1" style="min-width:200px;margin-bottom:0">
+        <label class="form-label">Env Example</label>
+        <input type="text" readonly
+               value="MELVIN_CLUSTER_NODES=192.168.1.10,192.168.1.11"
+               onclick="this.select()" style="cursor:text" />
+      </div>
+      <button class="btn btn-sm btn-secondary" onclick="this.previousElementSibling.previousElementSibling.querySelector('input').select();document.execCommand('copy');showToast('Copied!','success')">
+        📋 Copy
+      </button>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  function loadCluster() {
+    fetch("/api/cluster")
+      .then(r => r.json())
+      .then(d => renderCluster(d))
+      .catch(() => {
+        document.getElementById("nodes-body").innerHTML =
+          '<tr><td colspan="7" class="text-danger text-center">Failed to load cluster data.</td></tr>';
+      });
+  }
+
+  function renderCluster(data) {
+    const nodes  = data.nodes || [];
+    const online = nodes.filter(n => n.status === "online");
+    const cpus   = online.filter(n => n.cpu_pct != null).map(n => n.cpu_pct);
+    const avgCpu = cpus.length ? (cpus.reduce((a,b) => a+b, 0) / cpus.length).toFixed(1) + "%" : "–";
+    const totalRam = nodes.reduce((s, n) => s + (n.mem_total_gb || 0), 0);
+
+    document.getElementById("cl-total").textContent    = nodes.length;
+    document.getElementById("cl-online").textContent   = online.length;
+    document.getElementById("cl-avg-cpu").textContent  = avgCpu;
+    document.getElementById("cl-total-ram").textContent = totalRam.toFixed(1) + " GB";
+
+    document.getElementById("nodes-body").innerHTML = nodes.map(n => `
+      <tr>
+        <td><span class="text-accent">${n.id}</span></td>
+        <td>${n.host}</td>
+        <td><span class="badge ${n.role === "primary" ? "badge-blue" : "badge-grey"}">${n.role}</span></td>
+        <td><span class="badge ${n.status === "online" ? "badge-green" : "badge-red"}">${n.status}</span></td>
+        <td>${n.cpu_pct != null ? n.cpu_pct.toFixed(1) + "%" : "–"}</td>
+        <td>${n.mem_used_gb != null
+          ? `${n.mem_used_gb.toFixed(1)} / ${n.mem_total_gb.toFixed(1)} GB`
+          : "–"}</td>
+        <td>
+          ${n.status === "online"
+            ? `<button class="btn btn-sm btn-secondary" onclick="pingNode('${n.host}')">Ping</button>`
+            : `<span class="text-muted text-xs">unreachable</span>`}
+        </td>
+      </tr>`).join("");
+  }
+
+  function pingNode(host) {
+    showToast(`Pinging ${host}…`, "info");
+    // Actual ping is handled by the backend via /api/cluster — refresh suffices
+    setTimeout(loadCluster, 800);
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    loadCluster();
+    setInterval(loadCluster, 10000);
+  });
+</script>
+{% endblock %}
