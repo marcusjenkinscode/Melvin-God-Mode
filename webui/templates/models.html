@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% block title %}Melvin God Mode — Models{% endblock %}
+
+{% block content %}
+<div class="container">
+
+  <div class="page-header flex justify-between items-center">
+    <div>
+      <h2>🧠 Model Library</h2>
+      <p>Manage locally available Ollama models</p>
+    </div>
+    <button class="btn" onclick="loadModels()">⟳ Refresh</button>
+  </div>
+
+  <!-- ── Pull new model ─────────────────────────────────── -->
+  <div class="card mb-lg">
+    <div class="card-header"><h3>Pull New Model</h3></div>
+    <div class="flex gap-md items-center" style="flex-wrap:wrap">
+      <div class="form-group flex-1" style="min-width:200px;margin-bottom:0">
+        <label class="form-label" for="pull-name">Model Name / Tag</label>
+        <input type="text" id="pull-name" placeholder="e.g. llama3, mistral, codellama:7b" />
+      </div>
+      <button class="btn btn-primary" id="pull-btn" onclick="pullModel()" style="margin-top:22px">
+        ⬇ Pull Model
+      </button>
+      <div id="pull-status" class="text-sm text-dim" style="margin-top:22px"></div>
+    </div>
+    <!-- Suggestions -->
+    <div class="mt-md flex gap-sm" style="flex-wrap:wrap">
+      <span class="text-xs text-muted text-upper">Popular:</span>
+      {% for m in ["llama3", "mistral", "codellama", "phi3", "gemma2", "deepseek-r1", "qwen2.5"] %}
+        <button class="btn btn-sm" onclick="document.getElementById('pull-name').value='{{ m }}'">{{ m }}</button>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- ── Search / filter ────────────────────────────────── -->
+  <div class="flex gap-md items-center mb-md" style="flex-wrap:wrap">
+    <input type="search" id="model-search" placeholder="🔍  Filter models…"
+           style="max-width:320px" oninput="filterModels()" />
+    <span class="text-dim text-sm" id="model-count">Loading…</span>
+  </div>
+
+  <!-- ── Model cards grid ───────────────────────────────── -->
+  <div class="model-grid" id="model-grid">
+    <div class="text-muted text-center" style="grid-column:1/-1;padding:40px 0">
+      <span class="spinner"></span> Loading models…
+    </div>
+  </div>
+
+  <!-- ── Model info modal ───────────────────────────────── -->
+  <div id="model-modal" style="display:none;position:fixed;inset:0;background:#000a;z-index:200;align-items:center;justify-content:center">
+    <div class="card" style="max-width:600px;width:90%;max-height:80vh;overflow-y:auto">
+      <div class="card-header">
+        <h3 id="modal-title">Model Info</h3>
+        <button class="btn btn-sm" onclick="closeModal()">✕ Close</button>
+      </div>
+      <pre id="modal-body" style="font-size:.78rem;white-space:pre-wrap;word-break:break-all"></pre>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  let allModels = [];
+
+  function fmtBytes(bytes) {
+    if (!bytes) return "–";
+    const gb = bytes / 1024 / 1024 / 1024;
+    return gb >= 1 ? gb.toFixed(2) + " GB" : (bytes / 1024 / 1024).toFixed(0) + " MB";
+  }
+
+  function loadModels() {
+    const grid = document.getElementById("model-grid");
+    const cnt  = document.getElementById("model-count");
+    grid.innerHTML = '<div class="text-muted text-center" style="grid-column:1/-1;padding:40px 0"><span class="spinner"></span> Loading…</div>';
+
+    fetch("/api/models")
+      .then(r => r.json())
+      .then(data => {
+        allModels = data.models || [];
+        cnt.textContent = `${allModels.length} model${allModels.length !== 1 ? "s" : ""} installed`;
+        renderModels(allModels);
+      })
+      .catch(() => {
+        grid.innerHTML = '<div class="text-danger text-center" style="grid-column:1/-1;padding:40px 0">Failed to connect to Ollama.</div>';
+        cnt.textContent = "";
+      });
+  }
+
+  function renderModels(models) {
+    const grid = document.getElementById("model-grid");
+    if (models.length === 0) {
+      grid.innerHTML = '<div class="text-muted text-center" style="grid-column:1/-1;padding:40px 0">No models found. Pull one above.</div>';
+      return;
+    }
+    grid.innerHTML = models.map(m => `
+      <div class="model-card">
+        <div class="model-card-name">${m.name}</div>
+        <div class="model-card-size">${fmtBytes(m.size)}</div>
+        <div class="model-card-meta">
+          ${m.details?.family    ? `<span class="badge badge-blue">${m.details.family}</span>` : ""}
+          ${m.details?.parameter_size ? `<span class="badge badge-grey">${m.details.parameter_size}</span>` : ""}
+          ${m.details?.quantization_level ? `<span class="badge badge-yellow">${m.details.quantization_level}</span>` : ""}
+        </div>
+        <div class="text-xs text-muted">${m.digest || ""}</div>
+        <div class="model-card-actions">
+          <button class="btn btn-sm btn-secondary" onclick="showInfo('${m.name}')">ℹ Info</button>
+          <a class="btn btn-sm" href="/chat" onclick="sessionStorage.setItem('preferred_model','${m.name}')">💬 Chat</a>
+          <button class="btn btn-sm btn-danger" onclick="deleteModel('${m.name}', this)">🗑 Delete</button>
+        </div>
+      </div>`).join("");
+  }
+
+  function filterModels() {
+    const q = document.getElementById("model-search").value.toLowerCase();
+    renderModels(q ? allModels.filter(m => m.name.toLowerCase().includes(q)) : allModels);
+  }
+
+  function pullModel() {
+    const name = document.getElementById("pull-name").value.trim();
+    if (!name) { showToast("Enter a model name.", "warn"); return; }
+    const btn = document.getElementById("pull-btn");
+    const status = document.getElementById("pull-status");
+    btn.disabled = true;
+    btn.textContent = "Pulling…";
+    status.textContent = `Pulling ${name}…`;
+
+    fetch("/api/models/pull", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name })
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) { showToast(d.error, "error"); status.textContent = ""; }
+      else         { showToast(`Model "${name}" pulled successfully!`, "success"); status.textContent = ""; loadModels(); }
+    })
+    .catch(() => { showToast("Pull failed — check Ollama.", "error"); status.textContent = ""; })
+    .finally(() => { btn.disabled = false; btn.textContent = "⬇ Pull Model"; });
+  }
+
+  function deleteModel(name, btn) {
+    if (!confirm(`Delete model "${name}"? This cannot be undone.`)) return;
+    btn.disabled = true;
+    fetch(`/api/models/${encodeURIComponent(name)}`, { method: "DELETE" })
+      .then(r => r.json())
+      .then(d => {
+        if (d.error) showToast(d.error, "error");
+        else { showToast(`"${name}" deleted.`, "success"); loadModels(); }
+      })
+      .catch(() => showToast("Delete failed.", "error"))
+      .finally(() => btn.disabled = false);
+  }
+
+  function showInfo(name) {
+    document.getElementById("modal-title").textContent = name;
+    document.getElementById("modal-body").textContent = "Loading…";
+    document.getElementById("model-modal").style.display = "flex";
+
+    fetch("/api/models/info", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name })
+    })
+    .then(r => r.json())
+    .then(d => { document.getElementById("modal-body").textContent = JSON.stringify(d, null, 2); })
+    .catch(() => { document.getElementById("modal-body").textContent = "Failed to load info."; });
+  }
+
+  function closeModal() {
+    document.getElementById("model-modal").style.display = "none";
+  }
+
+  // Set preferred model in selector if coming from Models page
+  document.addEventListener("DOMContentLoaded", loadModels);
+
+  // Close modal on backdrop click
+  document.getElementById("model-modal").addEventListener("click", function(e) {
+    if (e.target === this) closeModal();
+  });
+</script>
+{% endblock %}
