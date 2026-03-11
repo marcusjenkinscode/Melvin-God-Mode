@@ -68,6 +68,11 @@ class ConversationMemory:
         with self._lock:
             self._system_prompt = prompt
 
+    @property
+    def system_prompt(self) -> str:
+        with self._lock:
+            return self._system_prompt
+
     # ------------------------------------------------------------------
     # Readers
     # ------------------------------------------------------------------

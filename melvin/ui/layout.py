@@ -104,9 +104,10 @@ class ChatDisplay:
 
     def flush_stream(self, model: str = "") -> None:
         with self._lock:
-            if self._streaming_buffer:
-                self.add_assistant(self._streaming_buffer, model)
-                self._streaming_buffer = ""
+            buffered = self._streaming_buffer
+            self._streaming_buffer = ""
+        if buffered:
+            self.add_assistant(buffered, model)
 
     def get_panel(self, height: int = 40) -> Panel:
         with self._lock:

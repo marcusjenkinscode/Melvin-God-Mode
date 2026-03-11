@@ -165,8 +165,9 @@ class Agent:
     def inject_context(self, text: str) -> None:
         """Inject arbitrary text into the system prompt (e.g. tool output)."""
         self._logger.log(f"[{self.spec.tag}] Injecting {len(text)} chars of context.")
+        current = self._memory.system_prompt
         self._memory.update_system_prompt(
-            self._memory._system_prompt + f"\n\n[CONTEXT]\n{text}\n[/CONTEXT]"
+            current + f"\n\n[CONTEXT]\n{text}\n[/CONTEXT]"
         )
 
 

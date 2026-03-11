@@ -109,7 +109,7 @@ class ToolManager:
     def _run_install(
         self,
         cmd: List[str],
-        progress_cb: Optional[Callable[[int]], None],
+        progress_cb: Optional[Callable[[int], None]],
         label: str,
     ) -> tuple[bool, str]:
         self._logger.log(f"Running: {' '.join(cmd)}")

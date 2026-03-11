@@ -83,7 +83,7 @@ MODEL_CATALOGUE: List[ModelSpec] = [
         description="Vision-language model – can describe images from file paths."
     ),
     ModelSpec(
-        "llama3.1:70b-instruct-q4_K_M", "Llama 3.1 70B (Q4)", "general",
+        "llama3.1:70b-instruct-q4_k_m", "Llama 3.1 70B (Q4)", "general",
         size_gb=40.0, min_ram_gb=22,
         description="Best quality model; needs ~22 GB RAM (fits on 24 GB with nothing else running)."
     ),
