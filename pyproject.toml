@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "melvin-ai"
+version = "2.0.0"
+description = "Self-learning AI assistant with local LLM support and a hacker toolkit"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+dependencies = [
+    "psutil>=5.9.8",
+    "rich>=13.7.1",
+    "requests>=2.31.0",
+    "cryptography>=42.0.5",
+    "ollama>=0.2.1",
+    "anyio>=4.3.0",
+    "gputil>=1.4.0",
+    "plyer>=2.1.0",
+]
+
+[project.scripts]
+melvin = "main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["melvin*"]

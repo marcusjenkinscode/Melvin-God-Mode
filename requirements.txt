@@ -1,0 +1,17 @@
+# Core runtime
+psutil>=5.9.8
+rich>=13.7.1
+requests>=2.31.0
+cryptography>=42.0.5
+
+# Ollama Python SDK (local LLM backend)
+ollama>=0.2.1
+
+# Async & concurrency helpers
+anyio>=4.3.0
+
+# Optional: GPU info via GPUtil (falls back gracefully)
+gputil>=1.4.0
+
+# Optional: system tray / notifications
+plyer>=2.1.0
